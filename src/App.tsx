@@ -3663,7 +3663,7 @@ function App() {
                 Vietnam, together
               </span>
               <span className="mt-0.5 hidden text-[10px] text-[#9a6b53] sm:block">
-                A shared trip notebook · Hội An & Đà Nẵng
+                Please review our important deets · Hội An & Đà Nẵng
               </span>
             </span>
           </a>
