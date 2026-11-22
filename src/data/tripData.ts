@@ -1,4 +1,4 @@
-import { supabase } from "../utils/supabase";
+import { isSupabaseConfigured, supabase } from "../utils/supabase";
 import type {
   CategoryRow,
   ExpensePayerRow,
@@ -298,6 +298,11 @@ async function restoreExpense(
 }
 
 export async function fetchTripData(): Promise<TripData> {
+  if (!isSupabaseConfigured) {
+    throw new Error(
+      "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.",
+    );
+  }
   const [peopleResult, categoryResult, expenseResult, itineraryResult, todoResult] =
     await Promise.all([
       supabase.from("people").select("id, name, age, created_at").order("name"),
