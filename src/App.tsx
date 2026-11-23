@@ -5526,7 +5526,7 @@ function App() {
             </span>
             <span className="min-w-0">
               <span className="block truncate text-sm font-bold tracking-[-0.02em] text-[#153eb5]">
-                From Shenzhen to zhen nalang us sa vietnam
+                PBB 7.0 · Hội An & Đà Nẵng
               </span>
               <span className="mt-0.5 hidden text-[10px] font-medium text-[#6b5335] sm:block">
                 Please review our important deets · Hội An & Đà Nẵng
