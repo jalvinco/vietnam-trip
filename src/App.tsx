@@ -20,17 +20,22 @@ import {
   Eye,
   EyeOff,
   Flame,
+  FolderOpen,
   Images,
+  LayoutGrid,
+  List,
   Lock,
   MapPin,
   Plane,
   Plus,
   ReceiptText,
+  RefreshCw,
   Share,
   Smartphone,
   Sparkles,
   Trophy,
   Unlock,
+  Upload,
   UsersRound,
   Wallet,
   Waves,
@@ -1304,6 +1309,186 @@ const DEFAULT_NOMINATION_DATES = [
 ];
 
 const NOMINATION_POINT_OPTIONS = [1, 2, 3] as const;
+
+const HOUSE_UPLOAD_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSc0n169dR0qrKGT92IUyCQTTb2MTuJL8kHLZxKIlqmN-eGLvQ/viewform";
+const HOUSE_UPLOAD_FORM_EMBED_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSc0n169dR0qrKGT92IUyCQTTb2MTuJL8kHLZxKIlqmN-eGLvQ/viewform?embedded=true";
+const HOUSE_DRIVE_FOLDER_ID =
+  "1JXnRissSMKqsgjp9Sdz8zkOsUsN1k64XaEBzjSCXHYlY9m8FcY90a4q9DJSRYw5cvNzt41Nb";
+const HOUSE_DRIVE_FOLDER_URL = `https://drive.google.com/drive/folders/${HOUSE_DRIVE_FOLDER_ID}?usp=sharing`;
+
+function HouseFilesPanel() {
+  const [driveLayout, setDriveLayout] = useState<"grid" | "list">("grid");
+  const [showEmbeddedForm, setShowEmbeddedForm] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const embeddedDriveUrl = `https://drive.google.com/embeddedfolderview?id=${HOUSE_DRIVE_FOLDER_ID}#${driveLayout}`;
+
+  return (
+    <section
+      id="house-files"
+      className="animate-fade-up overflow-hidden rounded-[26px] border-2 border-[#dcc294] bg-[#fffcf5] p-5 shadow-sm sm:p-6"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#dcc294] pb-4">
+        <div>
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#e11d2a]">
+            <FolderOpen size={13} />
+            The House Vault · Shared Files & Photos
+          </p>
+          <h2 className="mt-1 text-xl font-extrabold tracking-[-0.03em] text-[#153eb5] sm:text-2xl">
+            Upload & View Trip Files
+          </h2>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-[#5c4b32] sm:text-sm">
+            Upload tickets, receipts, photos, or documents through our Google Form and browse all uploaded files directly from our shared Google Drive folder below.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={HOUSE_UPLOAD_FORM_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-10 items-center gap-2 rounded-full border-2 border-[#facc15] bg-gradient-to-r from-[#e11d2a] to-[#b91c1c] px-4 py-2 text-xs font-extrabold uppercase tracking-wider text-[#fde047] no-underline shadow-sm transition hover:brightness-110"
+          >
+            <Upload size={14} />
+            Upload Files (Google Form)
+            <ExternalLink size={12} />
+          </a>
+          <button
+            type="button"
+            onClick={() => setShowEmbeddedForm((current) => !current)}
+            aria-expanded={showEmbeddedForm}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[#dcc294] bg-[#f8edd7] px-3.5 py-2 text-xs font-bold text-[#153eb5] transition hover:bg-[#f1dfc0]"
+          >
+            <Upload size={13} />
+            {showEmbeddedForm ? "Hide Inline Form" : "Embed Form Here"}
+          </button>
+          <a
+            href={HOUSE_DRIVE_FOLDER_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[#1d4ed8]/30 bg-[#eff6ff] px-3.5 py-2 text-xs font-bold text-[#153eb5] no-underline transition hover:bg-[#dbeafe]"
+          >
+            <FolderOpen size={14} />
+            Open Drive Folder
+            <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+
+      {showEmbeddedForm && (
+        <div className="mt-5 rounded-2xl border-2 border-[#1d4ed8]/30 bg-[#f8edd7]/60 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-[#153eb5]">
+                Google Form File Uploader
+              </p>
+              <p className="text-[11px] text-[#5c4b32]">
+                Note: Because Google Forms file upload questions require Google Account sign-in, if the form below prompts you to open in a new window, tap{" "}
+                <a
+                  href={HOUSE_UPLOAD_FORM_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-bold text-[#e11d2a] underline"
+                >
+                  Upload Files (Google Form)
+                </a>{" "}
+                above.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowEmbeddedForm(false)}
+              className="inline-flex min-h-8 items-center gap-1 rounded-full border border-[#dcc294] bg-white px-3 text-xs font-semibold text-[#5c4b32] hover:bg-[#fef08a]"
+            >
+              <X size={13} />
+              Close Form
+            </button>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-[#dcc294] bg-white">
+            <iframe
+              src={HOUSE_UPLOAD_FORM_EMBED_URL}
+              title="House File Upload Google Form"
+              className="h-[520px] w-full border-0"
+              loading="lazy"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex size-7 items-center justify-center rounded-full bg-[#1d4ed8] text-[#fde047]">
+              <FolderOpen size={14} />
+            </span>
+            <div>
+              <h3 className="text-sm font-extrabold text-[#172554]">
+                Uploaded Files in Google Drive
+              </h3>
+              <p className="text-[11px] text-[#786242]">
+                Click any file below to preview or download it from Google Drive
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="inline-flex rounded-full border border-[#dcc294] bg-[#f8edd7] p-0.5">
+              <button
+                type="button"
+                onClick={() => setDriveLayout("grid")}
+                aria-pressed={driveLayout === "grid"}
+                className={`inline-flex min-h-8 items-center gap-1 rounded-full px-3 text-xs font-bold transition ${
+                  driveLayout === "grid"
+                    ? "bg-[#1d4ed8] text-[#fde047] shadow-2xs"
+                    : "text-[#5c4b32] hover:text-[#153eb5]"
+                }`}
+              >
+                <LayoutGrid size={13} />
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setDriveLayout("list")}
+                aria-pressed={driveLayout === "list"}
+                className={`inline-flex min-h-8 items-center gap-1 rounded-full px-3 text-xs font-bold transition ${
+                  driveLayout === "list"
+                    ? "bg-[#1d4ed8] text-[#fde047] shadow-2xs"
+                    : "text-[#5c4b32] hover:text-[#153eb5]"
+                }`}
+              >
+                <List size={13} />
+                List
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setRefreshTick((t) => t + 1)}
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#dcc294] bg-white px-3 text-xs font-bold text-[#153eb5] transition hover:bg-[#f8edd7]"
+              title="Refresh Google Drive folder view after uploading"
+            >
+              <RefreshCw size={12} />
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border-2 border-[#dcc294] bg-white shadow-inner">
+          <iframe
+            key={`${driveLayout}-${refreshTick}`}
+            src={embeddedDriveUrl}
+            title="Shared Google Drive Folder - Uploaded Trip Files"
+            className="h-[420px] w-full border-0"
+            loading="lazy"
+            allow="autoplay"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function InstallAppModal({
   isOpen,
@@ -6290,6 +6475,8 @@ function App() {
               onToggleTodoDone={handleToggleTodoDone}
               onToggleAssignmentDone={handleToggleAssignmentDone}
             />
+
+            <HouseFilesPanel />
           </div>
         )}
 
