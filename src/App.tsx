@@ -6,6 +6,7 @@ import {
   BadgeCheck,
   Banknote,
   CalendarDays,
+  Camera,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -31,6 +32,7 @@ import {
   ReceiptText,
   RefreshCw,
   Share,
+  Shuffle,
   Smartphone,
   Sparkles,
   Trophy,
@@ -106,10 +108,15 @@ const rawPersonImages = import.meta.glob<string>(
   { eager: true, import: "default" },
 );
 
+const personExactImageMap: Record<string, string> = {};
 const personImageMap: Record<string, string> = {};
 for (const [path, url] of Object.entries(rawPersonImages)) {
   const filename = path.split("/").pop() ?? "";
-  const base = filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const stem = filename.replace(/\.[^.]+$/, "").toLowerCase();
+  if (stem) {
+    personExactImageMap[stem] = url;
+  }
+  const base = stem.replace(/[^a-z0-9]/g, "");
   if (base) {
     personImageMap[base] = url;
     const withoutDigits = base.replace(/\d+/g, "");
@@ -119,13 +126,201 @@ for (const [path, url] of Object.entries(rawPersonImages)) {
   }
 }
 
-function getPersonAvatarUrl(name: string): string | null {
+type StoredPersonImages = Record<
+  string,
+  {
+    profileDataUrl: string;
+    iconDataUrl: string;
+    updatedAt: number;
+  }
+>;
+
+const PERSON_IMAGES_STORAGE_KEY = "vietnam-trip-planner:person-images-v1";
+const PERSON_IMAGES_EVENT = "person-images-updated";
+
+let cachedCustomPersonImages: StoredPersonImages | null = null;
+
+function getCustomPersonImages(): StoredPersonImages {
+  if (cachedCustomPersonImages) return cachedCustomPersonImages;
+  try {
+    const raw = window.localStorage.getItem(PERSON_IMAGES_STORAGE_KEY);
+    cachedCustomPersonImages = raw ? (JSON.parse(raw) as StoredPersonImages) : {};
+  } catch {
+    cachedCustomPersonImages = {};
+  }
+  return cachedCustomPersonImages;
+}
+
+function saveCustomPersonImages(
+  personId: string,
+  profileDataUrl: string,
+  iconDataUrl: string,
+) {
+  const current = { ...getCustomPersonImages() };
+  current[personId] = {
+    profileDataUrl,
+    iconDataUrl,
+    updatedAt: Date.now(),
+  };
+  cachedCustomPersonImages = current;
+  try {
+    window.localStorage.setItem(PERSON_IMAGES_STORAGE_KEY, JSON.stringify(current));
+  } catch {
+    // Ignore localStorage quota warnings; runtime cache still holds it
+  }
+  window.dispatchEvent(new CustomEvent(PERSON_IMAGES_EVENT));
+}
+
+function usePersonImagesVersion() {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    const handler = () => setVersion((v) => v + 1);
+    window.addEventListener(PERSON_IMAGES_EVENT, handler);
+    return () => window.removeEventListener(PERSON_IMAGES_EVENT, handler);
+  }, []);
+  return version;
+}
+
+function getPersonProfileUrl(name: string, personId?: string): string | null {
+  const custom = getCustomPersonImages();
+  if (personId && custom[personId]?.profileDataUrl) {
+    return custom[personId].profileDataUrl;
+  }
+  if (personId) {
+    const idKey = personId.toLowerCase();
+    if (personExactImageMap[idKey]) return personExactImageMap[idKey];
+  }
   const normalized = name.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
   if (!normalized) return null;
   if (personImageMap[normalized]) return personImageMap[normalized];
   const withoutDigits = normalized.replace(/\d+/g, "");
   if (withoutDigits && personImageMap[withoutDigits]) return personImageMap[withoutDigits];
+  if (personId && personExactImageMap[`${personId.toLowerCase()}-icon`]) {
+    return personExactImageMap[`${personId.toLowerCase()}-icon`];
+  }
   return null;
+}
+
+function getPersonAvatarUrl(name: string, personId?: string): string | null {
+  const custom = getCustomPersonImages();
+  if (personId && custom[personId]?.iconDataUrl) {
+    return custom[personId].iconDataUrl;
+  }
+  if (personId) {
+    const iconKey = `${personId.toLowerCase()}-icon`;
+    if (personExactImageMap[iconKey]) return personExactImageMap[iconKey];
+  }
+  const normalized = name.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
+  if (normalized && personExactImageMap[`${normalized}-icon`]) {
+    return personExactImageMap[`${normalized}-icon`];
+  }
+  return getPersonProfileUrl(name, personId);
+}
+
+function estimateDataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return Math.round((base64.length * 3) / 4);
+}
+
+function loadHtmlImageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Could not decode the selected image file."));
+    };
+    img.src = objectUrl;
+  });
+}
+
+async function processAndUploadPersonImages(
+  personId: string,
+  file: File,
+): Promise<{
+  profileFilename: string;
+  iconFilename: string;
+  profileBytes: number;
+  iconBytes: number;
+  savedToDisk: boolean;
+}> {
+  const img = await loadHtmlImageFromFile(file);
+  const MAX_PROFILE_BYTES = 2 * 1024 * 1024; // 2 MB limit
+
+  // 1. Create Profile Image (<person.id>.jpg), compressed to < 2 MB
+  let maxDim = file.size > MAX_PROFILE_BYTES ? 1280 : 1440;
+  let quality = file.size > MAX_PROFILE_BYTES ? 0.84 : 0.88;
+  let profileDataUrl = "";
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const width = Math.max(1, Math.round((img.naturalWidth || 400) * scale));
+    const height = Math.max(1, Math.round((img.naturalHeight || 400) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Browser canvas is unavailable for image compression.");
+    ctx.fillStyle = "#fffcf5";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    profileDataUrl = canvas.toDataURL("image/jpeg", quality);
+    if (estimateDataUrlBytes(profileDataUrl) < MAX_PROFILE_BYTES) {
+      break;
+    }
+    quality = Math.max(0.5, quality - 0.1);
+    maxDim = Math.round(maxDim * 0.82);
+  }
+
+  // 2. Create Super-Compressed Icon Version (<person.id>-icon.jpg) for circle avatars
+  const ICON_SIZE = 144;
+  const iconCanvas = document.createElement("canvas");
+  iconCanvas.width = ICON_SIZE;
+  iconCanvas.height = ICON_SIZE;
+  const iconCtx = iconCanvas.getContext("2d");
+  if (!iconCtx) throw new Error("Browser canvas is unavailable for icon generation.");
+  const srcW = img.naturalWidth || 400;
+  const srcH = img.naturalHeight || 400;
+  const cropSide = Math.min(srcW, srcH);
+  const sx = Math.round((srcW - cropSide) / 2);
+  const sy = Math.round((srcH - cropSide) / 2);
+  iconCtx.fillStyle = "#fffcf5";
+  iconCtx.fillRect(0, 0, ICON_SIZE, ICON_SIZE);
+  iconCtx.drawImage(img, sx, sy, cropSide, cropSide, 0, 0, ICON_SIZE, ICON_SIZE);
+  const iconDataUrl = iconCanvas.toDataURL("image/jpeg", 0.68);
+
+  // Immediately update runtime + localStorage so all icons & profile modals reflect the upload
+  saveCustomPersonImages(personId, profileDataUrl, iconDataUrl);
+
+  let savedToDisk = false;
+  try {
+    const response = await fetch("/api/upload-person-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        personId,
+        profileDataUrl,
+        iconDataUrl,
+      }),
+    });
+    if (response.ok) {
+      savedToDisk = true;
+    }
+  } catch {
+    savedToDisk = false;
+  }
+
+  return {
+    profileFilename: `${personId}.jpg`,
+    iconFilename: `${personId}-icon.jpg`,
+    profileBytes: estimateDataUrlBytes(profileDataUrl),
+    iconBytes: estimateDataUrlBytes(iconDataUrl),
+    savedToDisk,
+  };
 }
 
 type View = "overview" | "nominations" | "itinerary" | "bookings" | "expenses";
@@ -483,17 +678,20 @@ function getPersonInitial(name: string) {
 }
 
 function PersonAvatar({
+  personId,
   name,
   color,
   sizeClass = "size-6 text-[10px]",
   borderClass = "border border-[#f59e0b]/40",
 }: {
+  personId?: string;
   name: string;
   color?: string;
   sizeClass?: string;
   borderClass?: string;
 }) {
-  const avatarUrl = getPersonAvatarUrl(name);
+  usePersonImagesVersion();
+  const avatarUrl = getPersonAvatarUrl(name, personId);
   const [loaded, setLoaded] = useState(false);
   return (
     <span
@@ -521,6 +719,46 @@ function PersonAvatar({
   );
 }
 
+function PersonProfilePhoto({
+  personId,
+  name,
+  color,
+  className = "h-48 w-40 text-3xl",
+}: {
+  personId: string;
+  name: string;
+  color?: string;
+  className?: string;
+}) {
+  usePersonImagesVersion();
+  const profileUrl = getPersonProfileUrl(name, personId);
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div
+      className={`relative inline-grid shrink-0 place-items-center overflow-hidden font-extrabold text-[#451a03] ${className}`}
+      style={{ backgroundColor: color ?? "#fcd34d" }}
+      title={name}
+    >
+      {profileUrl ? (
+        <>
+          {!loaded && <span className="animate-shimmer absolute inset-0" />}
+          <img
+            src={profileUrl}
+            alt={name}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            className={`size-full object-cover transition-all duration-300 ${
+              loaded ? "scale-100 opacity-100" : "scale-95 opacity-0"
+            }`}
+          />
+        </>
+      ) : (
+        getPersonInitial(name)
+      )}
+    </div>
+  );
+}
+
 function AvatarStack({
   people,
   size = "normal",
@@ -530,10 +768,11 @@ function AvatarStack({
   size?: "normal" | "small";
   onSelectPerson?: (person: Participant) => void;
 }) {
+  usePersonImagesVersion();
   return (
     <div className="flex items-center" aria-label={`${people.length} trip members`}>
       {people.slice(0, 7).map((person, index) => {
-        const avatarUrl = getPersonAvatarUrl(person.name);
+        const avatarUrl = getPersonAvatarUrl(person.name, person.id);
         return (
           <button
             type="button"
@@ -1645,6 +1884,7 @@ function NominationsPage({
   );
   const [focusedNomineeId, setFocusedNomineeId] = useState<string>("all");
   const [expandedGrandPersonId, setExpandedGrandPersonId] = useState<string | null>(null);
+  const [randomSeed, setRandomSeed] = useState(() => Math.floor(Math.random() * 10000));
   const [voterId, setVoterId] = useState("");
   const [nomineeDrafts, setNomineeDrafts] = useState<
     Record<string, { points: number; comment: string }>
@@ -2066,6 +2306,7 @@ function NominationsPage({
                       }`}
                     >
                       <PersonAvatar
+                        personId={person.id}
                         name={person.name}
                         color={person.color}
                         sizeClass="size-5 text-[9px]"
@@ -2193,6 +2434,7 @@ function NominationsPage({
                                 #{rankIndex + 1}
                               </span>
                               <PersonAvatar
+                                personId={person.id}
                                 name={person.name}
                                 color={person.color}
                                 sizeClass="size-10 text-xs"
@@ -2302,76 +2544,139 @@ function NominationsPage({
 
           {/* Right Column: Grand Total Eviction Leaderboard Across All Days (Shown ONLY when all days are revealed) */}
           <aside className="space-y-6">
-            <section className="rounded-[24px] border-2 border-[#facc15] bg-gradient-to-br from-[#153eb5] via-[#1d4ed8] to-[#991b1b] p-5 text-white shadow-lg">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <section className="relative overflow-hidden rounded-[26px] border-2 border-[#facc15] bg-gradient-to-br from-[#0b1942] via-[#153eb5] to-[#991b1b] p-5 text-white shadow-xl">
+              <div className="absolute -right-12 -top-12 size-44 rounded-full bg-[#facc15]/15 blur-2xl" />
+              <div className="relative z-10 mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#fde047]">
+                  <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-[#fde047]">
                     <Trophy size={13} />
-                    All 6 Days · Eviction Leaderboard
+                    Grand Finale · Eviction Night
                   </p>
-                  <h3 className="mt-0.5 text-lg font-extrabold text-white">
+                  <h3 className="mt-0.5 text-xl font-black tracking-[-0.03em] text-white">
                     {isAllDaysRevealed
-                      ? `Grand Total (${revealedTotalPoints} pt${revealedTotalPoints === 1 ? "" : "s"})`
+                      ? `GRAND TOTAL (${revealedTotalPoints} PT${revealedTotalPoints === 1 ? "" : "S"})`
                       : "Grand Total Locked"}
                   </h3>
                 </div>
-                <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-bold text-[#fde047]">
-                  {revealedDateSet.size}/{availableDays.length} days unlocked
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {isAllDaysRevealed && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRandomSeed((s) => s + Math.floor(Math.random() * 97) + 1)
+                      }
+                      className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#fde047] bg-[#e11d2a] px-3 py-1 text-[11px] font-extrabold text-[#fde047] shadow-xs transition hover:brightness-110"
+                      title="Pick new random nominations & reasons"
+                    >
+                      <Shuffle size={12} />
+                      Shuffle Reasons
+                    </button>
+                  )}
+                  <span className="rounded-full bg-black/30 px-3 py-1 text-xs font-bold text-[#fde047]">
+                    {revealedDateSet.size}/{availableDays.length} days
+                  </span>
+                </div>
               </div>
 
               {isAllDaysRevealed ? (
                 <>
-                  <p className="mb-4 text-xs text-[#fef9c3]/90">
-                    All {availableDays.length} days are revealed! Tap a housemate to view all their anonymous votes & reasons across the trip.
+                  <p className="relative z-10 mb-4 text-xs leading-5 text-[#fef9c3]/90">
+                    All {availableDays.length} days are unlocked! Featuring each housemate’s large portrait, Grand Total eviction score, and a random anonymous nomination & reason.
                   </p>
 
-                  <div className="space-y-2.5">
+                  <div className="relative z-10 space-y-3.5">
                     {grandTotalTally.map(
                       ({ person, totalPoints, voteCount, anonymousAllDaysVotes, byDay }, index) => {
                         const isExpanded = expandedGrandPersonId === person.id;
+                        const votesWithReason = anonymousAllDaysVotes.filter(
+                          (v) => Boolean(v.comment && v.comment.trim()),
+                        );
+                        const randomPool =
+                          votesWithReason.length > 0
+                            ? votesWithReason
+                            : anonymousAllDaysVotes;
+                        const featuredRandomVote =
+                          randomPool.length > 0
+                            ? randomPool[(randomSeed + index * 7) % randomPool.length]
+                            : null;
+
                         return (
                           <div
                             key={person.id}
-                            className="rounded-2xl border border-white/20 bg-white/95 p-3.5 text-xs text-[#172554] shadow-xs"
+                            className={`overflow-hidden rounded-2xl border-2 p-4 text-xs text-[#172554] shadow-md transition ${
+                              index === 0 && totalPoints > 0
+                                ? "border-[#facc15] bg-gradient-to-br from-[#fffbeb] via-white to-[#fff1f2] ring-2 ring-[#facc15]/60"
+                                : "border-white/25 bg-white/95"
+                            }`}
                           >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex min-w-0 items-center gap-2.5">
+                            <div className="flex flex-col gap-3.5 sm:flex-row sm:items-start">
+                              <div className="relative shrink-0 self-center sm:self-start">
+                                <PersonProfilePhoto
+                                  personId={person.id}
+                                  name={person.name}
+                                  color={person.color}
+                                  className="h-28 w-24 rounded-2xl border-2 border-[#facc15] text-2xl shadow-md sm:h-32 sm:w-28"
+                                />
                                 <span
-                                  className={`grid size-6 shrink-0 place-items-center rounded-full text-[10px] font-extrabold ${
+                                  className={`absolute -left-2 -top-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-black shadow-sm ${
                                     index === 0 && totalPoints > 0
-                                      ? "bg-[#e11d2a] text-[#fde047]"
-                                      : "bg-[#f8edd7] text-[#153eb5]"
+                                      ? "bg-[#e11d2a] text-[#fde047] ring-2 ring-[#facc15]"
+                                      : "bg-[#153eb5] text-[#fde047]"
                                   }`}
                                 >
                                   #{index + 1}
                                 </span>
-                                <PersonAvatar
-                                  name={person.name}
-                                  color={person.color}
-                                  sizeClass="size-8 text-[10px]"
-                                />
-                                <div className="min-w-0">
-                                  <span className="block truncate text-sm font-extrabold">
-                                    {person.name}
-                                  </span>
-                                  <span className="block text-[10px] text-[#786242]">
-                                    {voteCount} anonymous vote{voteCount === 1 ? "" : "s"}
+                              </div>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <h4 className="truncate text-base font-black tracking-[-0.02em] text-[#153eb5]">
+                                      {person.name}
+                                    </h4>
+                                    <p className="text-[11px] font-semibold text-[#786242]">
+                                      {voteCount} anonymous nomination{voteCount === 1 ? "" : "s"} across 6 days
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`rounded-full px-3.5 py-1 text-xs font-black shadow-2xs ${
+                                      totalPoints > 0
+                                        ? "bg-[#e11d2a] text-[#fde047] ring-1 ring-[#facc15]"
+                                        : "bg-[#f8edd7] text-[#786242]"
+                                    }`}
+                                  >
+                                    {totalPoints} TOTAL PT{totalPoints === 1 ? "" : "S"}
                                   </span>
                                 </div>
+
+                                {/* Random Nomination & Reason Spotlight */}
+                                {featuredRandomVote ? (
+                                  <div className="mt-2.5 rounded-xl border border-[#e11d2a]/30 bg-gradient-to-r from-[#fff5f5] to-[#fefce8] p-2.5">
+                                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-[#e11d2a]">
+                                        <Sparkles size={11} />
+                                        Random Nomination · {formatTripDate(featuredRandomVote.nominationDate)}
+                                      </span>
+                                      <span className="rounded-full bg-[#e11d2a] px-2 py-0.5 text-[10px] font-black text-[#fde047]">
+                                        +{featuredRandomVote.points} pt
+                                        {featuredRandomVote.points === 1 ? "" : "s"}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1.5 text-xs font-medium italic leading-5 text-[#172554]">
+                                      {featuredRandomVote.comment
+                                        ? `“${featuredRandomVote.comment}”`
+                                        : "“Nominated anonymously in the Confession Room (no reason written).”"}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="mt-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] font-semibold text-emerald-800">
+                                    Zero nominations received across the entire trip!
+                                  </div>
+                                )}
                               </div>
-                              <span
-                                className={`rounded-full px-3 py-1 text-xs font-black ${
-                                  totalPoints > 0
-                                    ? "bg-[#e11d2a] text-[#fde047]"
-                                    : "bg-[#f8edd7] text-[#786242]"
-                                }`}
-                              >
-                                {totalPoints} total pt{totalPoints === 1 ? "" : "s"}
-                              </span>
                             </div>
 
-                            <div className="mt-2.5 grid grid-cols-6 gap-1">
+                            <div className="mt-3 grid grid-cols-6 gap-1">
                               {byDay.map((d) => (
                                 <button
                                   key={d.nominationDate}
@@ -2448,7 +2753,7 @@ function NominationsPage({
                   </div>
                 </>
               ) : (
-                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#fde047]/45 bg-[#0b1942]/40 px-5 py-10 text-center">
+                <div className="relative z-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#fde047]/45 bg-[#0b1942]/40 px-5 py-10 text-center">
                   <span className="grid size-12 place-items-center rounded-full bg-[#fde047]/15 text-[#fde047]">
                     <Lock size={22} />
                   </span>
@@ -2529,6 +2834,7 @@ function NominationsPage({
                       }`}
                     >
                       <PersonAvatar
+                        personId={person.id}
                         name={person.name}
                         color={person.color}
                         sizeClass="size-5 text-[9px]"
@@ -2591,6 +2897,7 @@ function NominationsPage({
                               className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
                             >
                               <PersonAvatar
+                                personId={person.id}
                                 name={person.name}
                                 color={person.color}
                                 sizeClass="size-9 text-xs"
@@ -2777,6 +3084,7 @@ function PeopleDirectoryModal({
             >
               <div className="flex min-w-0 items-center gap-3">
                 <PersonAvatar
+                  personId={person.id}
                   name={person.name}
                   color={person.color}
                   sizeClass="size-12 text-sm"
@@ -2841,24 +3149,56 @@ function PersonProfileModal({
   onToggleAssignmentDone: (todo: Todo, personId: string, isDone: boolean) => Promise<void>;
   onUpdateProfile: (
     personId: string,
-    draft: { age: number | null; details: string | null },
+    draft: { name: string; age: number | null; details: string | null },
   ) => Promise<void>;
 }) {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [nameInput, setNameInput] = useState("");
   const [ageInput, setAgeInput] = useState("");
   const [detailsInput, setDetailsInput] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState("");
+  const [photoError, setPhotoError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!person) return;
     setIsEditingProfile(false);
+    setNameInput(person.name ?? "");
     setAgeInput(person.age !== null && person.age !== undefined ? String(person.age) : "");
     setDetailsInput(person.details ?? "");
     setProfileError("");
-  }, [person?.id, person?.age, person?.details]);
+    setPhotoStatus("");
+    setPhotoError("");
+  }, [person?.id, person?.name, person?.age, person?.details]);
 
   if (!person) return null;
+
+  async function handlePhotoFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !person) return;
+    if (!file.type.startsWith("image/")) {
+      setPhotoError("Please select a valid image file (JPG, PNG, WEBP, AVIF).");
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    setPhotoError("");
+    setPhotoStatus("");
+    try {
+      await processAndUploadPersonImages(person.id, file);
+      setPhotoStatus("Profile photo updated!");
+    } catch (err) {
+      setPhotoError(
+        err instanceof Error ? err.message : "Could not process and upload photo.",
+      );
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  }
 
   const personShares = expenses
     .flatMap((expense) =>
@@ -2921,6 +3261,11 @@ function PersonProfileModal({
     event.preventDefault();
     if (!person) return;
     setProfileError("");
+    const trimmedName = nameInput.trim();
+    if (!trimmedName) {
+      setProfileError("Name cannot be empty.");
+      return;
+    }
     const parsedAge = ageInput.trim() === "" ? null : Number(ageInput);
     if (parsedAge !== null && (!Number.isInteger(parsedAge) || parsedAge < 0)) {
       setProfileError("Enter a valid whole number for age.");
@@ -2929,6 +3274,7 @@ function PersonProfileModal({
     setIsSavingProfile(true);
     try {
       await onUpdateProfile(person.id, {
+        name: trimmedName,
         age: parsedAge,
         details: detailsInput.trim() || null,
       });
@@ -2962,49 +3308,105 @@ function PersonProfileModal({
         )}
 
         <div className="rounded-2xl border-2 border-[#facc15] bg-gradient-to-r from-[#153eb5] via-[#1d4ed8] to-[#e11d2a] p-4 text-white shadow-sm sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <PersonAvatar
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
+            <div className="flex shrink-0 flex-col items-center gap-2.5">
+              <PersonProfilePhoto
+                personId={person.id}
                 name={person.name}
                 color={person.color}
-                sizeClass="size-16 text-lg"
-                borderClass="border-2 border-[#fde047]"
+                className="h-48 w-40 rounded-2xl border-3 border-[#fde047] text-4xl shadow-lg sm:h-52 sm:w-44"
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => void handlePhotoFileChange(e)}
+                className="hidden"
+              />
+              <div className="flex w-40 items-center gap-1.5 sm:w-44">
+                <button
+                  type="button"
+                  disabled={isUploadingPhoto}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded-full border border-[#fde047] bg-black/35 px-2.5 text-[11px] font-bold text-[#fde047] transition hover:bg-black/55 disabled:opacity-55"
+                >
+                  <Camera size={13} />
+                  {isUploadingPhoto ? "Saving…" : "Upload"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingProfile((open) => !open)}
+                  className="inline-flex h-8 items-center justify-center rounded-full border border-[#fde047]/60 bg-black/20 px-2.5 text-[11px] font-semibold text-[#fde047] transition hover:bg-black/35"
+                >
+                  {isEditingProfile ? "Cancel" : "Edit"}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col justify-between gap-3">
               <div>
-                <h3 className="text-xl font-extrabold tracking-[-0.03em] text-white">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#fde047]">
+                    Official Housemate Portrait
+                  </p>
+                  <span className="inline-flex items-center rounded-full bg-[#facc15] px-2.5 py-0.5 text-xs font-bold text-[#172554]">
+                    {person.age !== null && person.age !== undefined
+                      ? `Age: ${person.age}`
+                      : "Age: Not specified"}
+                  </span>
+                </div>
+                <h3 className="mt-1 truncate text-2xl font-extrabold tracking-[-0.03em] text-white sm:text-3xl">
                   {person.name}
                 </h3>
-                <p className="mt-1 inline-flex items-center rounded-full bg-[#facc15] px-2.5 py-0.5 text-xs font-bold text-[#172554]">
-                  {person.age !== null && person.age !== undefined
-                    ? `Age: ${person.age}`
-                    : "Age: Not specified"}
+              </div>
+
+              <div className="flex-1 rounded-xl border border-white/15 bg-black/20 p-3.5 text-xs leading-5 text-[#fef9c3]">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#fde047]">
+                  Details
+                </p>
+                <p className="mt-1 whitespace-pre-wrap">
+                  {person.details || "No profile details added yet."}
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsEditingProfile((open) => !open)}
-              className="min-h-8 rounded-full border border-[#fde047]/60 bg-black/20 px-3 py-1 text-xs font-semibold text-[#fde047] transition hover:bg-black/35"
-            >
-              {isEditingProfile ? "Cancel edit" : "Edit profile"}
-            </button>
           </div>
 
-          <div className="mt-4 rounded-xl border border-white/15 bg-black/20 p-3.5 text-xs leading-5 text-[#fef9c3]">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#fde047]">
-              Details
+          {photoStatus && (
+            <p
+              role="status"
+              className="mt-3 rounded-xl border border-[#fde047] bg-black/30 px-3.5 py-2 text-xs font-semibold text-[#fde047]"
+            >
+              {photoStatus}
             </p>
-            <p className="mt-1 whitespace-pre-wrap">
-              {person.details || "No profile details added yet."}
+          )}
+          {photoError && (
+            <p
+              role="alert"
+              className="mt-3 rounded-xl bg-rose-100 px-3.5 py-2 text-xs font-semibold text-rose-900"
+            >
+              {photoError}
             </p>
-          </div>
+          )}
 
           {isEditingProfile && (
             <form
               onSubmit={handleSaveProfile}
               className="mt-4 space-y-3 rounded-xl bg-white p-3.5 text-[#172554]"
             >
-              <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
+              <div className="grid gap-3 sm:grid-cols-[1fr_110px]">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
+                    Name
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={nameInput}
+                    onChange={(event) => setNameInput(event.target.value)}
+                    placeholder="Housemate name"
+                    className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
+                  />
+                </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
                     Age
@@ -3019,19 +3421,19 @@ function PersonProfileModal({
                     className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
                   />
                 </label>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
-                    Details
-                  </span>
-                  <input
-                    type="text"
-                    value={detailsInput}
-                    onChange={(event) => setDetailsInput(event.target.value)}
-                    placeholder="Add bio, role, notes, or preferences…"
-                    className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
-                  />
-                </label>
               </div>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
+                  Details
+                </span>
+                <input
+                  type="text"
+                  value={detailsInput}
+                  onChange={(event) => setDetailsInput(event.target.value)}
+                  placeholder="Add bio, role, notes, or preferences…"
+                  className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
+                />
+              </label>
               {profileError && (
                 <p role="alert" className="text-xs font-medium text-rose-700">
                   {profileError}
@@ -6121,13 +6523,40 @@ function App() {
 
   async function handleUpdatePersonProfile(
     personId: string,
-    draft: { age: number | null; details: string | null },
+    draft: { name: string; age: number | null; details: string | null },
   ) {
     const updated = await updatePersonProfile(personId, draft);
     setPeople((current) =>
       current.map((person) =>
-        person.id === updated.id ? { ...person, age: updated.age, details: updated.details } : person,
+        person.id === updated.id
+          ? { ...person, name: updated.name, age: updated.age, details: updated.details }
+          : person,
       ),
+    );
+    setExpenses((current) =>
+      current.map((expense) => ({
+        ...expense,
+        payers: expense.payers.map((payer) =>
+          payer.person_id === updated.id && payer.person
+            ? { ...payer, person: { ...payer.person, name: updated.name } }
+            : payer,
+        ),
+        shares: expense.shares.map((share) =>
+          share.person_id === updated.id && share.person
+            ? { ...share, person: { ...share.person, name: updated.name } }
+            : share,
+        ),
+      })),
+    );
+    setTodos((current) =>
+      current.map((todo) => ({
+        ...todo,
+        assignments: todo.assignments.map((assignment) =>
+          assignment.person_id === updated.id && assignment.person
+            ? { ...assignment, person: { ...assignment.person, name: updated.name } }
+            : assignment,
+        ),
+      })),
     );
   }
 

@@ -822,11 +822,16 @@ export async function setTodoAssignmentDone(
 
 export async function updatePersonProfile(
   personId: string,
-  draft: { age: number | null; details: string | null },
+  draft: { name: string; age: number | null; details: string | null },
 ): Promise<PersonRow> {
+  const trimmedName = draft.name.trim();
+  if (!trimmedName) {
+    throw new Error("Enter a valid name.");
+  }
   const { data, error } = await supabase
     .from("people")
     .update({
+      name: trimmedName,
       age: draft.age,
       details: draft.details?.trim() || null,
     })
