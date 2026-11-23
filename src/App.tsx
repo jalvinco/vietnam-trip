@@ -109,21 +109,29 @@ const rawPersonImages = import.meta.glob<string>(
 );
 
 const personExactImageMap: Record<string, string> = {};
-const personImageMap: Record<string, string> = {};
 for (const [path, url] of Object.entries(rawPersonImages)) {
   const filename = path.split("/").pop() ?? "";
   const stem = filename.replace(/\.[^.]+$/, "").toLowerCase();
   if (stem) {
     personExactImageMap[stem] = url;
   }
-  const base = stem.replace(/[^a-z0-9]/g, "");
-  if (base) {
-    personImageMap[base] = url;
-    const withoutDigits = base.replace(/\d+/g, "");
-    if (withoutDigits && !personImageMap[withoutDigits]) {
-      personImageMap[withoutDigits] = url;
+}
+
+const personNameToIdMap: Record<string, string> = {};
+
+function registerPeopleNameIdMap(list: { id: string; name: string }[]) {
+  for (const item of list) {
+    const key = item.name.trim().toLowerCase();
+    if (key) {
+      personNameToIdMap[key] = item.id;
     }
   }
+}
+
+function resolvePersonId(name: string, personId?: string): string | null {
+  if (personId) return personId.toLowerCase();
+  const key = name.trim().toLowerCase();
+  return key && personNameToIdMap[key] ? personNameToIdMap[key].toLowerCase() : null;
 }
 
 type StoredPersonImages = Record<
@@ -156,8 +164,9 @@ function saveCustomPersonImages(
   profileDataUrl: string,
   iconDataUrl: string,
 ) {
+  const normalizedId = personId.toLowerCase();
   const current = { ...getCustomPersonImages() };
-  current[personId] = {
+  current[normalizedId] = {
     profileDataUrl,
     iconDataUrl,
     updatedAt: Date.now(),
@@ -182,39 +191,39 @@ function usePersonImagesVersion() {
 }
 
 function getPersonProfileUrl(name: string, personId?: string): string | null {
+  const resolvedId = resolvePersonId(name, personId);
+  if (!resolvedId) return null;
   const custom = getCustomPersonImages();
+  if (custom[resolvedId]?.profileDataUrl) {
+    return custom[resolvedId].profileDataUrl;
+  }
   if (personId && custom[personId]?.profileDataUrl) {
     return custom[personId].profileDataUrl;
   }
-  if (personId) {
-    const idKey = personId.toLowerCase();
-    if (personExactImageMap[idKey]) return personExactImageMap[idKey];
+  if (personExactImageMap[resolvedId]) {
+    return personExactImageMap[resolvedId];
   }
-  const normalized = name.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
-  if (!normalized) return null;
-  if (personImageMap[normalized]) return personImageMap[normalized];
-  const withoutDigits = normalized.replace(/\d+/g, "");
-  if (withoutDigits && personImageMap[withoutDigits]) return personImageMap[withoutDigits];
-  if (personId && personExactImageMap[`${personId.toLowerCase()}-icon`]) {
-    return personExactImageMap[`${personId.toLowerCase()}-icon`];
+  if (personExactImageMap[`${resolvedId}-icon`]) {
+    return personExactImageMap[`${resolvedId}-icon`];
   }
   return null;
 }
 
 function getPersonAvatarUrl(name: string, personId?: string): string | null {
+  const resolvedId = resolvePersonId(name, personId);
+  if (!resolvedId) return null;
   const custom = getCustomPersonImages();
+  if (custom[resolvedId]?.iconDataUrl) {
+    return custom[resolvedId].iconDataUrl;
+  }
   if (personId && custom[personId]?.iconDataUrl) {
     return custom[personId].iconDataUrl;
   }
-  if (personId) {
-    const iconKey = `${personId.toLowerCase()}-icon`;
-    if (personExactImageMap[iconKey]) return personExactImageMap[iconKey];
+  const iconKey = `${resolvedId}-icon`;
+  if (personExactImageMap[iconKey]) {
+    return personExactImageMap[iconKey];
   }
-  const normalized = name.toLowerCase().replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
-  if (normalized && personExactImageMap[`${normalized}-icon`]) {
-    return personExactImageMap[`${normalized}-icon`];
-  }
-  return getPersonProfileUrl(name, personId);
+  return null;
 }
 
 function estimateDataUrlBytes(dataUrl: string): number {
@@ -1188,6 +1197,7 @@ function TodoForm({
                 }`}
               >
                 <PersonAvatar
+                  personId={person.id}
                   name={person.name}
                   color={person.color ?? avatarColors[index % avatarColors.length]}
                   sizeClass="size-5 text-[9px]"
@@ -1479,6 +1489,7 @@ function TodosPanel({
                                 }`}
                               >
                                 <PersonAvatar
+                                  personId={assignment.person_id}
                                   name={personName}
                                   color={
                                     person?.color ?? avatarColors[idx % avatarColors.length]
@@ -2255,8 +2266,294 @@ function NominationsPage({
       </section>
 
       {initialTab === "board" ? (
-        <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr] lg:items-start">
-          {/* Left Column: Selected Day Reveal Consent + Anonymous Nominated Persons Votes & Reasons */}
+        <div className="space-y-6">
+          {/* Full-Width Row: Grand Total Eviction Leaderboard Across All Days */}
+          <section className="relative overflow-hidden rounded-[26px] border-2 border-[#facc15] bg-gradient-to-br from-[#0b1942] via-[#153eb5] to-[#991b1b] p-5 text-white shadow-xl sm:p-6">
+            <div className="absolute -right-12 -top-12 size-56 rounded-full bg-[#facc15]/15 blur-2xl" />
+            <div className="relative z-10 mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-[#fde047]">
+                  <Trophy size={13} />
+                  Grand Finale · Eviction Night
+                </p>
+                <h3 className="mt-0.5 text-xl font-black tracking-[-0.03em] text-white sm:text-2xl">
+                  {isAllDaysRevealed
+                    ? `GRAND TOTAL (${revealedTotalPoints} PT${revealedTotalPoints === 1 ? "" : "S"})`
+                    : "Grand Total Locked"}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {isAllDaysRevealed && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRandomSeed((s) => s + Math.floor(Math.random() * 97) + 1)
+                    }
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#fde047] bg-[#e11d2a] px-3.5 py-1 text-xs font-extrabold text-[#fde047] shadow-xs transition hover:brightness-110"
+                    title="Pick new random nominations & reasons"
+                  >
+                    <Shuffle size={13} />
+                    Shuffle Nominations
+                  </button>
+                )}
+                <span className="rounded-full bg-black/30 px-3 py-1 text-xs font-bold text-[#fde047]">
+                  {revealedDateSet.size}/{availableDays.length} days unlocked
+                </span>
+              </div>
+            </div>
+
+            {isAllDaysRevealed ? (
+              <>
+                <p className="relative z-10 mb-5 text-xs leading-5 text-[#fef9c3]/90 sm:text-sm">
+                  All {availableDays.length} days are unlocked! Top 3 most-nominated housemates lead the first row, followed by the remaining housemates (4 per row), each showcasing random anonymous nominations & reasons.
+                </p>
+
+                {(() => {
+                  const renderGrandPersonCard = (
+                    entry: (typeof grandTotalTally)[number],
+                    index: number,
+                    isTopThree: boolean,
+                  ) => {
+                    const { person, totalPoints, voteCount, anonymousAllDaysVotes, byDay } =
+                      entry;
+                    const isExpanded = expandedGrandPersonId === person.id;
+                    const votesWithReason = anonymousAllDaysVotes.filter((v) =>
+                      Boolean(v.comment && v.comment.trim()),
+                    );
+                    const votesWithoutReason = anonymousAllDaysVotes.filter(
+                      (v) => !v.comment || !v.comment.trim(),
+                    );
+                    const orderedPool = [...votesWithReason, ...votesWithoutReason];
+                    const featuredRandomVotes: typeof anonymousAllDaysVotes = [];
+                    if (orderedPool.length <= 2) {
+                      featuredRandomVotes.push(...orderedPool);
+                    } else {
+                      const firstIdx = (randomSeed + index * 7) % orderedPool.length;
+                      let secondIdx =
+                        (randomSeed + index * 13 + Math.max(1, Math.floor(orderedPool.length / 2))) %
+                        orderedPool.length;
+                      if (secondIdx === firstIdx) {
+                        secondIdx = (firstIdx + 1) % orderedPool.length;
+                      }
+                      featuredRandomVotes.push(
+                        orderedPool[firstIdx],
+                        orderedPool[secondIdx],
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={person.id}
+                        className={`flex flex-col justify-between overflow-hidden rounded-2xl border-2 p-4 text-xs text-[#172554] shadow-md transition ${
+                          index === 0 && totalPoints > 0
+                            ? "border-[#facc15] bg-gradient-to-br from-[#fffbeb] via-white to-[#fff1f2] ring-2 ring-[#facc15]/70"
+                            : isTopThree && totalPoints > 0
+                              ? "border-[#fde047]/80 bg-gradient-to-br from-[#fffcf5] to-white"
+                              : "border-white/25 bg-white/95"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex flex-col items-center gap-3 text-center">
+                            <div className="relative shrink-0">
+                              <PersonProfilePhoto
+                                personId={person.id}
+                                name={person.name}
+                                color={person.color}
+                                className={
+                                  isTopThree
+                                    ? "h-44 w-36 rounded-2xl border-3 border-[#facc15] text-3xl shadow-lg sm:h-48 sm:w-40"
+                                    : "h-36 w-28 rounded-2xl border-2 border-[#facc15] text-2xl shadow-md sm:h-40 sm:w-32"
+                                }
+                              />
+                              <span
+                                className={`absolute -left-2 -top-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-black shadow-sm ${
+                                  index === 0 && totalPoints > 0
+                                    ? "bg-[#e11d2a] text-[#fde047] ring-2 ring-[#facc15]"
+                                    : isTopThree
+                                      ? "bg-[#1d4ed8] text-[#fde047] ring-1 ring-[#facc15]"
+                                      : "bg-[#153eb5] text-[#fde047]"
+                                }`}
+                              >
+                                #{index + 1}
+                              </span>
+                            </div>
+
+                            <div className="min-w-0 w-full">
+                              <h4
+                                className={`truncate font-black tracking-[-0.02em] text-[#153eb5] ${
+                                  isTopThree ? "text-lg" : "text-base"
+                                }`}
+                              >
+                                {person.name}
+                              </h4>
+                              <p className="mt-0.5 text-[11px] font-semibold text-[#786242]">
+                                {voteCount} anonymous nomination{voteCount === 1 ? "" : "s"}
+                              </p>
+                              <div className="mt-2">
+                                <span
+                                  className={`inline-block rounded-full px-3.5 py-1 text-xs font-black shadow-2xs ${
+                                    totalPoints > 0
+                                      ? "bg-[#e11d2a] text-[#fde047] ring-1 ring-[#facc15]"
+                                      : "bg-[#f8edd7] text-[#786242]"
+                                  }`}
+                                >
+                                  {totalPoints} TOTAL PT{totalPoints === 1 ? "" : "S"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* At least 2 Random Nominations & Reasons Spotlight */}
+                          {featuredRandomVotes.length > 0 ? (
+                            <div className="mt-3.5 space-y-2 text-left">
+                              <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#991b1b]">
+                                Random Nominations ({featuredRandomVotes.length})
+                              </p>
+                              {featuredRandomVotes.map((rv, rvIdx) => (
+                                <div
+                                  key={`${rv.id}-${rvIdx}`}
+                                  className="rounded-xl border border-[#e11d2a]/30 bg-gradient-to-r from-[#fff5f5] to-[#fefce8] p-2.5"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-[#e11d2a]">
+                                      <Sparkles size={10} />
+                                      {formatTripDate(rv.nominationDate)}
+                                    </span>
+                                    <span className="rounded-full bg-[#e11d2a] px-2 py-0.5 text-[10px] font-black text-[#fde047]">
+                                      +{rv.points} pt{rv.points === 1 ? "" : "s"}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-xs font-medium italic leading-4 text-[#172554]">
+                                    {rv.comment
+                                      ? `“${rv.comment}”`
+                                      : "“Nominated anonymously (no reason written).”"}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-3.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-center text-[11px] font-semibold text-emerald-800">
+                              Zero nominations received across the entire trip!
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-3.5 pt-2">
+                          <div className="grid grid-cols-6 gap-1">
+                            {byDay.map((d) => (
+                              <button
+                                key={d.nominationDate}
+                                type="button"
+                                onClick={() => setSelectedDate(d.nominationDate)}
+                                className={`rounded-lg px-1 py-1 text-center text-[10px] transition ${
+                                  d.dayPoints && d.dayPoints > 0
+                                    ? "bg-[#fee2e2] font-bold text-[#991b1b] hover:bg-[#fecaca]"
+                                    : "bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                                }`}
+                                title={`${formatTripDate(d.nominationDate)}: ${d.dayPoints} pt(s)`}
+                              >
+                                <span className="block text-[8px] font-bold uppercase opacity-75">
+                                  D{d.dayNumber}
+                                </span>
+                                <span>{d.dayPoints}pt</span>
+                              </button>
+                            ))}
+                          </div>
+
+                          {anonymousAllDaysVotes.length > 0 && (
+                            <div className="mt-2.5 border-t border-[#e8d7b5] pt-2 text-left">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedGrandPersonId(isExpanded ? null : person.id)
+                                }
+                                className="flex w-full items-center justify-between text-[11px] font-bold text-[#153eb5] hover:underline"
+                              >
+                                <span>
+                                  {isExpanded ? "Hide" : "View"} all {anonymousAllDaysVotes.length} vote
+                                  {anonymousAllDaysVotes.length === 1 ? "" : "s"} & reasons
+                                </span>
+                                <ChevronDown
+                                  size={14}
+                                  className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                />
+                              </button>
+
+                              {isExpanded && (
+                                <ul className="mt-2 space-y-1.5">
+                                  {anonymousAllDaysVotes.map((v) => (
+                                    <li
+                                      key={v.id}
+                                      className="rounded-lg border border-[#dcc294] bg-[#fffcf5] px-2.5 py-2"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[10px] font-bold text-[#786242]">
+                                          {formatTripDate(v.nominationDate)} · Anonymous
+                                        </span>
+                                        <span className="rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-extrabold text-[#991b1b]">
+                                          +{v.points} pt{v.points === 1 ? "" : "s"}
+                                        </span>
+                                      </div>
+                                      {v.comment ? (
+                                        <p className="mt-1 text-[11px] italic text-[#172554]">
+                                          “{v.comment}”
+                                        </p>
+                                      ) : (
+                                        <p className="mt-1 text-[10px] italic text-[#9c8462]">
+                                          No reason written.
+                                        </p>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const topThree = grandTotalTally.slice(0, 3);
+                  const restHousemates = grandTotalTally.slice(3);
+
+                  return (
+                    <div className="relative z-10 space-y-4">
+                      {/* 1st Row: Top 3 */}
+                      <div className="grid gap-4 md:grid-cols-3">
+                        {topThree.map((entry, idx) =>
+                          renderGrandPersonCard(entry, idx, true),
+                        )}
+                      </div>
+
+                      {/* Below Row(s): 4 per row */}
+                      {restHousemates.length > 0 && (
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                          {restHousemates.map((entry, idx) =>
+                            renderGrandPersonCard(entry, idx + 3, false),
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </>
+            ) : (
+              <div className="relative z-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#fde047]/45 bg-[#0b1942]/40 px-5 py-8 text-center">
+                <span className="grid size-12 place-items-center rounded-full bg-[#fde047]/15 text-[#fde047]">
+                  <Lock size={22} />
+                </span>
+                <p className="mt-3 text-sm font-extrabold text-[#fffbeb]">
+                  Grand Tally Is Hidden Until All {availableDays.length} Days Are Revealed
+                </p>
+                <p className="mt-1.5 max-w-xl text-xs leading-5 text-[#fef9c3]/85">
+                  Currently {revealedDateSet.size} of {availableDays.length} days have been unlocked. Once every housemate votes to reveal all {availableDays.length} days (Nov 24–29), the overall Grand Total Eviction Leaderboard will unlock here!
+                </p>
+              </div>
+            )}
+          </section>
+
+          {/* Selected Day Reveal Consent + Anonymous Nominated Persons Votes & Reasons */}
           <div className="space-y-6">
             {/* Reveal Consent Card */}
             <section className="rounded-[24px] border-2 border-[#1d4ed8]/30 bg-gradient-to-br from-[#eff6ff] via-white to-[#fefce8] p-5 shadow-xs">
@@ -2541,232 +2838,6 @@ function NominationsPage({
               )}
             </section>
           </div>
-
-          {/* Right Column: Grand Total Eviction Leaderboard Across All Days (Shown ONLY when all days are revealed) */}
-          <aside className="space-y-6">
-            <section className="relative overflow-hidden rounded-[26px] border-2 border-[#facc15] bg-gradient-to-br from-[#0b1942] via-[#153eb5] to-[#991b1b] p-5 text-white shadow-xl">
-              <div className="absolute -right-12 -top-12 size-44 rounded-full bg-[#facc15]/15 blur-2xl" />
-              <div className="relative z-10 mb-4 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-[#fde047]">
-                    <Trophy size={13} />
-                    Grand Finale · Eviction Night
-                  </p>
-                  <h3 className="mt-0.5 text-xl font-black tracking-[-0.03em] text-white">
-                    {isAllDaysRevealed
-                      ? `GRAND TOTAL (${revealedTotalPoints} PT${revealedTotalPoints === 1 ? "" : "S"})`
-                      : "Grand Total Locked"}
-                  </h3>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {isAllDaysRevealed && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setRandomSeed((s) => s + Math.floor(Math.random() * 97) + 1)
-                      }
-                      className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#fde047] bg-[#e11d2a] px-3 py-1 text-[11px] font-extrabold text-[#fde047] shadow-xs transition hover:brightness-110"
-                      title="Pick new random nominations & reasons"
-                    >
-                      <Shuffle size={12} />
-                      Shuffle Reasons
-                    </button>
-                  )}
-                  <span className="rounded-full bg-black/30 px-3 py-1 text-xs font-bold text-[#fde047]">
-                    {revealedDateSet.size}/{availableDays.length} days
-                  </span>
-                </div>
-              </div>
-
-              {isAllDaysRevealed ? (
-                <>
-                  <p className="relative z-10 mb-4 text-xs leading-5 text-[#fef9c3]/90">
-                    All {availableDays.length} days are unlocked! Featuring each housemate’s large portrait, Grand Total eviction score, and a random anonymous nomination & reason.
-                  </p>
-
-                  <div className="relative z-10 space-y-3.5">
-                    {grandTotalTally.map(
-                      ({ person, totalPoints, voteCount, anonymousAllDaysVotes, byDay }, index) => {
-                        const isExpanded = expandedGrandPersonId === person.id;
-                        const votesWithReason = anonymousAllDaysVotes.filter(
-                          (v) => Boolean(v.comment && v.comment.trim()),
-                        );
-                        const randomPool =
-                          votesWithReason.length > 0
-                            ? votesWithReason
-                            : anonymousAllDaysVotes;
-                        const featuredRandomVote =
-                          randomPool.length > 0
-                            ? randomPool[(randomSeed + index * 7) % randomPool.length]
-                            : null;
-
-                        return (
-                          <div
-                            key={person.id}
-                            className={`overflow-hidden rounded-2xl border-2 p-4 text-xs text-[#172554] shadow-md transition ${
-                              index === 0 && totalPoints > 0
-                                ? "border-[#facc15] bg-gradient-to-br from-[#fffbeb] via-white to-[#fff1f2] ring-2 ring-[#facc15]/60"
-                                : "border-white/25 bg-white/95"
-                            }`}
-                          >
-                            <div className="flex flex-col gap-3.5 sm:flex-row sm:items-start">
-                              <div className="relative shrink-0 self-center sm:self-start">
-                                <PersonProfilePhoto
-                                  personId={person.id}
-                                  name={person.name}
-                                  color={person.color}
-                                  className="h-28 w-24 rounded-2xl border-2 border-[#facc15] text-2xl shadow-md sm:h-32 sm:w-28"
-                                />
-                                <span
-                                  className={`absolute -left-2 -top-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-black shadow-sm ${
-                                    index === 0 && totalPoints > 0
-                                      ? "bg-[#e11d2a] text-[#fde047] ring-2 ring-[#facc15]"
-                                      : "bg-[#153eb5] text-[#fde047]"
-                                  }`}
-                                >
-                                  #{index + 1}
-                                </span>
-                              </div>
-
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <h4 className="truncate text-base font-black tracking-[-0.02em] text-[#153eb5]">
-                                      {person.name}
-                                    </h4>
-                                    <p className="text-[11px] font-semibold text-[#786242]">
-                                      {voteCount} anonymous nomination{voteCount === 1 ? "" : "s"} across 6 days
-                                    </p>
-                                  </div>
-                                  <span
-                                    className={`rounded-full px-3.5 py-1 text-xs font-black shadow-2xs ${
-                                      totalPoints > 0
-                                        ? "bg-[#e11d2a] text-[#fde047] ring-1 ring-[#facc15]"
-                                        : "bg-[#f8edd7] text-[#786242]"
-                                    }`}
-                                  >
-                                    {totalPoints} TOTAL PT{totalPoints === 1 ? "" : "S"}
-                                  </span>
-                                </div>
-
-                                {/* Random Nomination & Reason Spotlight */}
-                                {featuredRandomVote ? (
-                                  <div className="mt-2.5 rounded-xl border border-[#e11d2a]/30 bg-gradient-to-r from-[#fff5f5] to-[#fefce8] p-2.5">
-                                    <div className="flex flex-wrap items-center justify-between gap-1.5">
-                                      <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-[#e11d2a]">
-                                        <Sparkles size={11} />
-                                        Random Nomination · {formatTripDate(featuredRandomVote.nominationDate)}
-                                      </span>
-                                      <span className="rounded-full bg-[#e11d2a] px-2 py-0.5 text-[10px] font-black text-[#fde047]">
-                                        +{featuredRandomVote.points} pt
-                                        {featuredRandomVote.points === 1 ? "" : "s"}
-                                      </span>
-                                    </div>
-                                    <p className="mt-1.5 text-xs font-medium italic leading-5 text-[#172554]">
-                                      {featuredRandomVote.comment
-                                        ? `“${featuredRandomVote.comment}”`
-                                        : "“Nominated anonymously in the Confession Room (no reason written).”"}
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <div className="mt-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] font-semibold text-emerald-800">
-                                    Zero nominations received across the entire trip!
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="mt-3 grid grid-cols-6 gap-1">
-                              {byDay.map((d) => (
-                                <button
-                                  key={d.nominationDate}
-                                  type="button"
-                                  onClick={() => setSelectedDate(d.nominationDate)}
-                                  className={`rounded-lg px-1.5 py-1 text-center text-[10px] transition ${
-                                    d.dayPoints && d.dayPoints > 0
-                                      ? "bg-[#fee2e2] font-bold text-[#991b1b] hover:bg-[#fecaca]"
-                                      : "bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
-                                  }`}
-                                  title={`${formatTripDate(d.nominationDate)}: ${d.dayPoints} pt(s)`}
-                                >
-                                  <span className="block text-[8px] font-bold uppercase opacity-75">
-                                    D{d.dayNumber}
-                                  </span>
-                                  <span>{d.dayPoints}pt</span>
-                                </button>
-                              ))}
-                            </div>
-
-                            {anonymousAllDaysVotes.length > 0 && (
-                              <div className="mt-2.5 border-t border-[#e8d7b5] pt-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedGrandPersonId(isExpanded ? null : person.id)
-                                  }
-                                  className="flex w-full items-center justify-between text-[11px] font-bold text-[#153eb5] hover:underline"
-                                >
-                                  <span>
-                                    {isExpanded ? "Hide" : "View"} all {anonymousAllDaysVotes.length} vote
-                                    {anonymousAllDaysVotes.length === 1 ? "" : "s"} & reasons
-                                  </span>
-                                  <ChevronDown
-                                    size={14}
-                                    className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                                  />
-                                </button>
-
-                                {isExpanded && (
-                                  <ul className="mt-2 space-y-1.5">
-                                    {anonymousAllDaysVotes.map((v) => (
-                                      <li
-                                        key={v.id}
-                                        className="rounded-lg border border-[#dcc294] bg-[#fffcf5] px-2.5 py-2"
-                                      >
-                                        <div className="flex items-center justify-between gap-2">
-                                          <span className="text-[10px] font-bold text-[#786242]">
-                                            {formatTripDate(v.nominationDate)} · Anonymous
-                                          </span>
-                                          <span className="rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-extrabold text-[#991b1b]">
-                                            +{v.points} pt{v.points === 1 ? "" : "s"}
-                                          </span>
-                                        </div>
-                                        {v.comment ? (
-                                          <p className="mt-1 text-[11px] italic text-[#172554]">
-                                            “{v.comment}”
-                                          </p>
-                                        ) : (
-                                          <p className="mt-1 text-[10px] italic text-[#9c8462]">
-                                            No reason written.
-                                          </p>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      },
-                    )}
-                  </div>
-                </>
-              ) : (
-                <div className="relative z-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#fde047]/45 bg-[#0b1942]/40 px-5 py-10 text-center">
-                  <span className="grid size-12 place-items-center rounded-full bg-[#fde047]/15 text-[#fde047]">
-                    <Lock size={22} />
-                  </span>
-                  <p className="mt-3 text-sm font-extrabold text-[#fffbeb]">
-                    Grand Tally Is Hidden Until All {availableDays.length} Days Are Revealed
-                  </p>
-                  <p className="mt-1.5 text-xs leading-5 text-[#fef9c3]/85">
-                    Currently {revealedDateSet.size} of {availableDays.length} days have been unlocked. Once every housemate votes to reveal all {availableDays.length} days (Nov 24–29), the overall Grand Total Eviction Leaderboard will unlock here!
-                  </p>
-                </div>
-              )}
-            </section>
-          </aside>
         </div>
       ) : (
         /* Confession Room Tab: Cast or Edit Anonymous Nominations */
@@ -5438,6 +5509,7 @@ function ExpenseForm({
                 className="flex min-h-11 items-center gap-2 rounded-xl border border-[#eddcc4] bg-white px-3 py-1.5"
               >
                 <PersonAvatar
+                  personId={person.id}
                   name={person.name}
                   color={person.color ?? avatarColors[index % avatarColors.length]}
                   sizeClass="size-6 text-[10px]"
@@ -5509,6 +5581,7 @@ function ExpenseForm({
                 }`}
               >
                 <PersonAvatar
+                  personId={person.id}
                   name={person.name}
                   color={person.color ?? avatarColors[index % avatarColors.length]}
                   sizeClass="size-5 text-[9px]"
@@ -5931,7 +6004,12 @@ function ExpensePanel({
                   onClick={() => onSelectPerson(person)}
                   className="animate-fade-up flex w-full items-center gap-3 rounded-xl border border-[#f3e5d0] bg-[#fffaf3] px-3 py-2.5 text-left transition hover:border-[#1d4ed8] hover:bg-white"
                 >
-                  <PersonAvatar name={person.name} color={person.color} sizeClass="size-8 text-xs" />
+                  <PersonAvatar
+                    personId={person.id}
+                    name={person.name}
+                    color={person.color}
+                    sizeClass="size-8 text-xs"
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-semibold text-[#153eb5]">{person.name}</p>
                     <div className="mt-1 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[10px] text-[#785c4e]">
@@ -6080,6 +6158,7 @@ function ExpensePanel({
                                   <li key={payer.id} className="flex items-center justify-between gap-3 text-xs text-[#68736c]">
                                     <span className="inline-flex items-center gap-2">
                                       <PersonAvatar
+                                        personId={payer.person_id}
                                         name={payer.person?.name ?? "?"}
                                         sizeClass="size-5 text-[9px]"
                                       />
@@ -6105,6 +6184,7 @@ function ExpensePanel({
                                   <li key={share.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
                                     <span className="inline-flex items-center gap-2 text-[#68736c]">
                                       <PersonAvatar
+                                        personId={share.person_id}
                                         name={share.person?.name ?? "?"}
                                         sizeClass="size-5 text-[9px]"
                                       />
@@ -6195,6 +6275,7 @@ function App() {
     setLoadError("");
     try {
       const data = await fetchTripData();
+      registerPeopleNameIdMap(data.people);
       setPeople(
         data.people.map((person, index) => ({
           ...person,
@@ -6526,6 +6607,7 @@ function App() {
     draft: { name: string; age: number | null; details: string | null },
   ) {
     const updated = await updatePersonProfile(personId, draft);
+    registerPeopleNameIdMap([updated]);
     setPeople((current) =>
       current.map((person) =>
         person.id === updated.id
