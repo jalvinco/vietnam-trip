@@ -15,6 +15,7 @@ import {
   Coffee,
   Compass,
   CreditCard,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -25,6 +26,8 @@ import {
   Plane,
   Plus,
   ReceiptText,
+  Share,
+  Smartphone,
   Sparkles,
   Trophy,
   Unlock,
@@ -121,6 +124,15 @@ function getPersonAvatarUrl(name: string): string | null {
 }
 
 type View = "overview" | "nominations" | "itinerary" | "bookings" | "expenses";
+
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  readonly userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform: string;
+  }>;
+  prompt(): Promise<void>;
+}
 type Category = CategoryRow;
 type Participant = PersonRow & { color: string };
 type Expense = ExpenseDetails;
@@ -1292,6 +1304,110 @@ const DEFAULT_NOMINATION_DATES = [
 ];
 
 const NOMINATION_POINT_OPTIONS = [1, 2, 3] as const;
+
+function InstallAppModal({
+  isOpen,
+  canPromptNative,
+  onTriggerNativeInstall,
+  onClose,
+}: {
+  isOpen: boolean;
+  canPromptNative: boolean;
+  onTriggerNativeInstall: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <FormModal
+      isOpen={isOpen}
+      eyebrow="Add to Home Screen · Phone App"
+      title="Install PBB 7.0 Vietnam on Your Phone"
+      onClose={onClose}
+    >
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 rounded-2xl border-2 border-[#facc15] bg-gradient-to-r from-[#153eb5] via-[#1d4ed8] to-[#e11d2a] p-4 text-white">
+          <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-black/25 text-[#fde047] ring-1 ring-[#facc15]">
+            <Smartphone size={22} />
+          </span>
+          <div>
+            <p className="text-sm font-extrabold text-[#fffbeb]">
+              Use our trip planner like a native mobile app
+            </p>
+            <p className="mt-1 text-xs leading-5 text-[#fef9c3]/90">
+              Launch straight from your phone’s home screen in full-screen mode with quick access to The House, Nominations, Itinerary, Bookings, and Expenses.
+            </p>
+          </div>
+        </div>
+
+        {canPromptNative && (
+          <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4">
+            <p className="text-xs font-bold text-emerald-900">
+              One-Tap Install Available
+            </p>
+            <p className="mt-1 text-xs text-emerald-800">
+              Your browser supports direct app installation. Tap below to add the app to your phone now:
+            </p>
+            <button
+              type="button"
+              onClick={onTriggerNativeInstall}
+              className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-full bg-emerald-600 px-5 text-xs font-extrabold uppercase tracking-wider text-white shadow-xs transition hover:bg-emerald-700"
+            >
+              <Download size={15} />
+              Install App Now
+            </button>
+          </div>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border-2 border-[#dcc294] bg-[#f8edd7]/70 p-4">
+            <p className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-[#153eb5]">
+              <Share size={14} />
+              iPhone & iPad (Safari)
+            </p>
+            <ol className="mt-2.5 list-decimal space-y-1.5 pl-4 text-xs leading-5 text-[#5c4b32]">
+              <li>
+                Open this page in <strong>Safari</strong>.
+              </li>
+              <li>
+                Tap the <strong>Share</strong> button{" "}
+                <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-[#153eb5]">
+                  ⍐
+                </span>{" "}
+                at the bottom of the screen.
+              </li>
+              <li>
+                Scroll down and tap <strong>Add to Home Screen</strong>.
+              </li>
+              <li>
+                Tap <strong>Add</strong> in the top-right corner.
+              </li>
+            </ol>
+          </div>
+
+          <div className="rounded-2xl border-2 border-[#dcc294] bg-[#f8edd7]/70 p-4">
+            <p className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-[#e11d2a]">
+              <Download size={14} />
+              Android (Chrome)
+            </p>
+            <ol className="mt-2.5 list-decimal space-y-1.5 pl-4 text-xs leading-5 text-[#5c4b32]">
+              <li>
+                Open this page in <strong>Chrome</strong>.
+              </li>
+              <li>
+                Tap the <strong>⋮ menu</strong> in the top-right corner (or tap the install button above).
+              </li>
+              <li>
+                Select <strong>Install app</strong> or <strong>Add to Home screen</strong>.
+              </li>
+              <li>
+                Confirm by tapping <strong>Install</strong>.
+              </li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </FormModal>
+  );
+}
 
 type NominationsPageTab = "board" | "cast";
 
@@ -5475,6 +5591,10 @@ function App() {
   const [isPeopleDirectoryOpen, setIsPeopleDirectoryOpen] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [openedFromDirectory, setOpenedFromDirectory] = useState(false);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstallHelpOpen, setIsInstallHelpOpen] = useState(false);
+  const [isStandaloneApp, setIsStandaloneApp] = useState(false);
   const [weather, setWeather] = useState<TripWeatherForecast>({
     byDate: {},
     hoiAnSummary: null,
@@ -5517,6 +5637,51 @@ function App() {
         // Ignore weather network errors silently
       });
   }, []);
+
+  useEffect(() => {
+    const checkStandalone = () => {
+      const isStandaloneDisplay = window.matchMedia("(display-mode: standalone)").matches;
+      const isIosStandalone = Boolean(
+        (window.navigator as Navigator & { standalone?: boolean }).standalone,
+      );
+      setIsStandaloneApp(isStandaloneDisplay || isIosStandalone);
+    };
+    checkStandalone();
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setDeferredInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredInstallPrompt(null);
+      setIsStandaloneApp(true);
+      setIsInstallHelpOpen(false);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  async function handleInstallAppClick() {
+    if (deferredInstallPrompt) {
+      try {
+        await deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice;
+        if (choice.outcome === "accepted") {
+          setDeferredInstallPrompt(null);
+        }
+        return;
+      } catch {
+        // Fall back to instructions modal
+      }
+    }
+    setIsInstallHelpOpen(true);
+  }
 
   async function handleCreateExpense(draft: ExpenseDraft) {
     setIsSaving(true);
@@ -5876,7 +6041,18 @@ function App() {
               </span>
             </span>
           </a>
-          <div className="flex items-center gap-3 sm:gap-4">
+          <div className="flex items-center gap-2.5 sm:gap-4">
+            {!isStandaloneApp && (
+              <button
+                type="button"
+                onClick={() => void handleInstallAppClick()}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-full border-2 border-[#facc15] bg-gradient-to-r from-[#1d4ed8] to-[#e11d2a] px-3 py-1 text-[11px] font-extrabold text-[#fde047] shadow-xs transition hover:brightness-110"
+                title="Install web app on your phone"
+              >
+                <Download size={13} />
+                <span>Install App</span>
+              </button>
+            )}
             <div className="hidden text-right sm:block">
               {(weather.hoiAnSummary || weather.daNangSummary) && (
                 <p className="mb-0.5 text-[10px] font-bold text-[#e11d2a]">
@@ -6299,6 +6475,13 @@ function App() {
         onSetSharePaid={handleSharePaid}
         onToggleAssignmentDone={handleToggleAssignmentDone}
         onUpdateProfile={handleUpdatePersonProfile}
+      />
+
+      <InstallAppModal
+        isOpen={isInstallHelpOpen}
+        canPromptNative={Boolean(deferredInstallPrompt)}
+        onTriggerNativeInstall={() => void handleInstallAppClick()}
+        onClose={() => setIsInstallHelpOpen(false)}
       />
 
       <nav
