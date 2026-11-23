@@ -55,6 +55,12 @@ export type ItineraryDraft = {
   description: string | null;
 };
 
+export type VoterNominationDraft = {
+  nomineePersonId: string;
+  points: number;
+  comment: string | null;
+};
+
 export type TripData = {
   people: PersonRow[];
   categories: CategoryRow[];
@@ -338,11 +344,11 @@ export async function fetchTripData(): Promise<TripData> {
     supabase.from("todos").select(todoDetailsSelection).order("done").order("name"),
     supabase
       .from("nomination_days")
-      .select("nomination_date, max_nominations_per_person")
+      .select("nomination_date")
       .order("nomination_date"),
     supabase
       .from("nominations")
-      .select("id, nomination_date, voter_person_id, nominee_person_id, created_at")
+      .select("id, nomination_date, voter_person_id, nominee_person_id, points, comment, created_at")
       .order("created_at", { ascending: false }),
     supabase
       .from("nomination_reveal_votes")
@@ -837,8 +843,7 @@ export async function updatePersonProfile(
 export async function saveVoterNominationsForDay(
   nominationDate: string,
   voterPersonId: string,
-  nomineePersonIds: string[],
-  maxNominations = 2,
+  entries: VoterNominationDraft[],
 ): Promise<NominationRow[]> {
   if (!nominationDate) {
     throw new Error("Choose a valid nomination day.");
@@ -846,15 +851,28 @@ export async function saveVoterNominationsForDay(
   if (!voterPersonId) {
     throw new Error("Select which housemate is voting.");
   }
-  const uniqueNominees = Array.from(new Set(nomineePersonIds));
-  if (uniqueNominees.length !== nomineePersonIds.length) {
-    throw new Error("You cannot nominate the same housemate twice on the same day.");
-  }
-  if (uniqueNominees.includes(voterPersonId)) {
-    throw new Error("Housemates cannot nominate themselves.");
-  }
-  if (uniqueNominees.length > maxNominations) {
-    throw new Error(`You can nominate at most ${maxNominations} housemates per day.`);
+  const seenNominees = new Set<string>();
+  const normalizedEntries: VoterNominationDraft[] = [];
+
+  for (const entry of entries) {
+    if (!entry.nomineePersonId) continue;
+    if (entry.nomineePersonId === voterPersonId) {
+      throw new Error("Housemates cannot nominate themselves.");
+    }
+    if (seenNominees.has(entry.nomineePersonId)) {
+      throw new Error("You cannot nominate the same housemate twice on the same day.");
+    }
+    const pts = Math.round(Number(entry.points));
+    if (!Number.isFinite(pts) || pts <= 0) {
+      throw new Error("Each nomination must have at least 1 point.");
+    }
+    seenNominees.add(entry.nomineePersonId);
+    const trimmedComment = entry.comment?.trim() ?? "";
+    normalizedEntries.push({
+      nomineePersonId: entry.nomineePersonId,
+      points: pts,
+      comment: trimmedComment.length > 0 ? trimmedComment : null,
+    });
   }
 
   const clearResult = await supabase
@@ -866,20 +884,24 @@ export async function saveVoterNominationsForDay(
     throw dataError("Could not update existing nominations", clearResult.error);
   }
 
-  if (uniqueNominees.length === 0) {
+  if (normalizedEntries.length === 0) {
     return [];
   }
 
   const { data, error } = await supabase
     .from("nominations")
     .insert(
-      uniqueNominees.map((nomineeId) => ({
+      normalizedEntries.map((item) => ({
         nomination_date: nominationDate,
         voter_person_id: voterPersonId,
-        nominee_person_id: nomineeId,
+        nominee_person_id: item.nomineePersonId,
+        points: item.points,
+        comment: item.comment,
       })),
     )
-    .select("id, nomination_date, voter_person_id, nominee_person_id, created_at");
+    .select(
+      "id, nomination_date, voter_person_id, nominee_person_id, points, comment, created_at",
+    );
 
   if (error) {
     throw dataError("Could not save nominations", error);

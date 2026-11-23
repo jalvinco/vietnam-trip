@@ -83,7 +83,6 @@ export type TodoAssignmentRow = {
 
 export type NominationDayRow = {
   nomination_date: string;
-  max_nominations_per_person: number;
 };
 
 export type NominationRow = {
@@ -91,6 +90,8 @@ export type NominationRow = {
   nomination_date: string;
   voter_person_id: string;
   nominee_person_id: string;
+  points: number;
+  comment: string | null;
   created_at: string;
 };
 
@@ -309,11 +310,9 @@ export type Database = {
         NominationDayRow,
         {
           nomination_date: string;
-          max_nominations_per_person?: number;
         },
         {
           nomination_date?: string;
-          max_nominations_per_person?: number;
         }
       >;
       nominations: Table<
@@ -323,6 +322,8 @@ export type Database = {
           nomination_date: string;
           voter_person_id: string;
           nominee_person_id: string;
+          points?: number;
+          comment?: string | null;
           created_at?: string;
         },
         {
@@ -330,6 +331,8 @@ export type Database = {
           nomination_date?: string;
           voter_person_id?: string;
           nominee_person_id?: string;
+          points?: number;
+          comment?: string | null;
           created_at?: string;
         },
         [

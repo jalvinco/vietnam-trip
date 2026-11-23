@@ -57,6 +57,7 @@ import {
   type ItineraryDraft,
   type TodoDetails,
   type TodoDraft,
+  type VoterNominationDraft,
 } from "./data/tripData";
 import type {
   CategoryRow,
@@ -119,7 +120,7 @@ function getPersonAvatarUrl(name: string): string | null {
   return null;
 }
 
-type View = "overview" | "itinerary" | "bookings" | "expenses";
+type View = "overview" | "nominations" | "itinerary" | "bookings" | "expenses";
 type Category = CategoryRow;
 type Participant = PersonRow & { color: string };
 type Expense = ExpenseDetails;
@@ -1290,378 +1291,86 @@ const DEFAULT_NOMINATION_DATES = [
   "2026-11-29",
 ];
 
-function NominationModal({
-  isOpen,
-  people,
-  nominationDays,
-  nominations,
-  isSaving,
-  onClose,
-  onOpenBoard,
-  onSaveNominations,
-}: {
-  isOpen: boolean;
-  people: Participant[];
-  nominationDays: NominationDayRow[];
-  nominations: NominationRow[];
-  isSaving: boolean;
-  onClose: () => void;
-  onOpenBoard: () => void;
-  onSaveNominations: (
-    nominationDate: string,
-    voterPersonId: string,
-    nomineePersonIds: string[],
-    maxChoices: number,
-  ) => Promise<void>;
-}) {
-  const availableDays =
-    nominationDays.length > 0
-      ? nominationDays
-      : DEFAULT_NOMINATION_DATES.map((d) => ({
-          nomination_date: d,
-          max_nominations_per_person: 2,
-        }));
+const NOMINATION_POINT_OPTIONS = [1, 2, 3] as const;
 
-  const [selectedDate, setSelectedDate] = useState(
-    availableDays[0]?.nomination_date ?? "2026-11-24",
-  );
-  const [voterId, setVoterId] = useState("");
-  const [selectedNomineeIds, setSelectedNomineeIds] = useState<string[]>([]);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [error, setError] = useState("");
+type NominationsPageTab = "board" | "cast";
 
-  const activeVoterId =
-    people.some((p) => p.id === voterId) ? voterId : (people[0]?.id ?? "");
-
-  const currentDayConfig = availableDays.find((d) => d.nomination_date === selectedDate);
-  const maxChoices = currentDayConfig?.max_nominations_per_person ?? 2;
-
-  useEffect(() => {
-    if (!activeVoterId || !selectedDate) return;
-    const existingForVoterAndDay = nominations
-      .filter(
-        (n) => n.nomination_date === selectedDate && n.voter_person_id === activeVoterId,
-      )
-      .map((n) => n.nominee_person_id);
-    setSelectedNomineeIds(existingForVoterAndDay);
-    setError("");
-  }, [activeVoterId, selectedDate, nominations, isOpen]);
-
-  function toggleNominee(personId: string) {
-    if (personId === activeVoterId) return;
-    setError("");
-    setStatusMessage("");
-    setSelectedNomineeIds((current) => {
-      if (current.includes(personId)) {
-        return current.filter((id) => id !== personId);
-      }
-      if (current.length >= maxChoices) {
-        setError(`You can only nominate up to ${maxChoices} housemates per day.`);
-        return current;
-      }
-      return [...current, personId];
-    });
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setStatusMessage("");
-    if (!activeVoterId) {
-      setError("Select who is voting first.");
-      return;
-    }
-    try {
-      await onSaveNominations(selectedDate, activeVoterId, selectedNomineeIds, maxChoices);
-      const voterName = people.find((p) => p.id === activeVoterId)?.name ?? "Housemate";
-      setStatusMessage(
-        selectedNomineeIds.length === 0
-          ? `Cleared ${voterName}'s nominations for ${formatTripDate(selectedDate)}.`
-          : `Saved ${voterName}'s nomination${selectedNomineeIds.length === 1 ? "" : "s"} for ${formatTripDate(selectedDate)}!`,
-      );
-    } catch (saveErr) {
-      setError(
-        saveErr instanceof Error ? saveErr.message : "Could not save nominations.",
-      );
-    }
-  }
-
-  const dayNominations = nominations.filter((n) => n.nomination_date === selectedDate);
-
-  const existingVoterChoices = dayNominations.filter(
-    (n) => n.voter_person_id === activeVoterId,
-  );
-
-  return (
-    <FormModal
-      isOpen={isOpen}
-      eyebrow="Confession Room · Secret Ballot"
-      title="Nominate a Housemate for Eviction"
-      onClose={onClose}
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div>
-          <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#153eb5]">
-            1. Choose Nomination Day
-          </span>
-          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-            {availableDays.map((day, idx) => {
-              const isSelected = day.nomination_date === selectedDate;
-              const countOnDay = nominations.filter(
-                (n) => n.nomination_date === day.nomination_date,
-              ).length;
-              return (
-                <button
-                  key={day.nomination_date}
-                  type="button"
-                  onClick={() => {
-                    setSelectedDate(day.nomination_date);
-                    setStatusMessage("");
-                    setError("");
-                  }}
-                  aria-pressed={isSelected}
-                  className={`min-w-[82px] rounded-2xl border px-3 py-2 text-left transition ${
-                    isSelected
-                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
-                      : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
-                  }`}
-                >
-                  <span className="block text-[9px] font-bold tracking-[0.12em] opacity-80">
-                    DAY {idx + 1}
-                  </span>
-                  <span className="mt-0.5 block text-xs font-bold">
-                    {formatTripDate(day.nomination_date)}
-                  </span>
-                  <span
-                    className={`mt-0.5 block text-[10px] ${
-                      isSelected ? "text-white/90" : "text-[#e11d2a]"
-                    }`}
-                  >
-                    {countOnDay} vote{countOnDay === 1 ? "" : "s"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#153eb5]">
-              2. Who is voting? (Confession Room)
-            </span>
-            <span className="text-[11px] font-medium text-[#786242]">
-              Tap your profile to cast or edit your votes
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {people.map((person) => {
-              const isVoter = person.id === activeVoterId;
-              const castCount = dayNominations.filter(
-                (n) => n.voter_person_id === person.id,
-              ).length;
-              return (
-                <button
-                  key={person.id}
-                  type="button"
-                  aria-pressed={isVoter}
-                  onClick={() => {
-                    setVoterId(person.id);
-                    setStatusMessage("");
-                    setError("");
-                  }}
-                  className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3 py-1.5 text-xs font-bold transition ${
-                    isVoter
-                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
-                      : "border-[#dcc294] bg-white text-[#5c4b32] hover:bg-[#f8edd7]"
-                  }`}
-                >
-                  <PersonAvatar name={person.name} color={person.color} sizeClass="size-5 text-[9px]" />
-                  <span>{person.name}</span>
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                      isVoter
-                        ? "bg-black/25 text-[#fde047]"
-                        : castCount > 0
-                          ? "bg-[#fef08a] text-[#713f12]"
-                          : "bg-[#f3e5d0] text-[#786242]"
-                    }`}
-                  >
-                    {castCount}/{maxChoices}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border-2 border-[#e11d2a]/35 bg-gradient-to-br from-[#fff5f5] via-white to-[#fefce8] p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-[#e11d2a]">
-                3. Nominate up to {maxChoices} Housemates ({formatTripDate(selectedDate)})
-              </p>
-              <p className="mt-0.5 text-[11px] text-[#5c4b32]">
-                {existingVoterChoices.length > 0
-                  ? "Editing your existing nominations for this day. Select or unselect housemates below."
-                  : `Choose up to ${maxChoices} housemates to nominate for eviction today.`}
-              </p>
-            </div>
-            <span className="rounded-full bg-[#e11d2a] px-3 py-1 text-xs font-bold text-[#fde047]">
-              {selectedNomineeIds.length} / {maxChoices} selected
-            </span>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
-            {people
-              .filter((person) => person.id !== activeVoterId)
-              .map((person) => {
-                const isNominated = selectedNomineeIds.includes(person.id);
-                return (
-                  <button
-                    key={person.id}
-                    type="button"
-                    aria-pressed={isNominated}
-                    onClick={() => toggleNominee(person.id)}
-                    className={`flex min-h-12 items-center justify-between gap-3 rounded-xl border-2 px-3.5 py-2 text-left transition ${
-                      isNominated
-                        ? "border-[#e11d2a] bg-[#fee2e2] text-[#991b1b] shadow-xs"
-                        : "border-[#dcc294] bg-white text-[#172554] hover:border-[#1d4ed8]"
-                    }`}
-                  >
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <PersonAvatar
-                        name={person.name}
-                        color={person.color}
-                        sizeClass="size-8 text-xs"
-                        borderClass={
-                          isNominated ? "border-2 border-[#e11d2a]" : "border border-[#dcc294]"
-                        }
-                      />
-                      <span className="truncate text-xs font-bold">{person.name}</span>
-                    </div>
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
-                        isNominated
-                          ? "bg-[#e11d2a] text-[#fde047]"
-                          : "bg-[#f8edd7] text-[#786242]"
-                      }`}
-                    >
-                      {isNominated ? "Nominated" : "Nominate"}
-                    </span>
-                  </button>
-                );
-              })}
-          </div>
-
-          {statusMessage && (
-            <p
-              role="status"
-              className="mt-3 rounded-xl border border-[#eab308] bg-[#fef08a] px-3.5 py-2 text-xs font-semibold text-[#713f12]"
-            >
-              {statusMessage}
-            </p>
-          )}
-          {error && (
-            <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700">
-              {error}
-            </p>
-          )}
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#dcc294] pt-3">
-            {selectedNomineeIds.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setSelectedNomineeIds([])}
-                className="min-h-9 rounded-full border border-[#dcc294] bg-white px-3.5 text-xs font-semibold text-[#786242] hover:bg-[#f8edd7]"
-              >
-                Clear selection
-              </button>
-            ) : (
-              <span className="text-[11px] text-[#786242]">
-                Save with 0 selected to remove your votes for this day
-              </span>
-            )}
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex min-h-10 items-center gap-2 rounded-full bg-gradient-to-r from-[#e11d2a] to-[#b91c1c] px-5 text-xs font-extrabold uppercase tracking-wider text-[#fde047] shadow-sm ring-2 ring-[#facc15] transition hover:brightness-110 disabled:opacity-50"
-            >
-              {isSaving
-                ? "Saving…"
-                : existingVoterChoices.length > 0
-                  ? "Update Nominations"
-                  : "Confirm Nominations"}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-[#dcc294] bg-[#f8edd7]/80 px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-[#153eb5]">
-              Want to see the Nominations Board & Grand Total?
-            </p>
-            <p className="text-[11px] text-[#786242]">
-              Each day stays hidden until all housemates vote to reveal it on the Nominations Board.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onOpenBoard();
-            }}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[#1d4ed8] bg-[#1d4ed8] px-3.5 text-xs font-bold text-[#fde047] transition hover:bg-[#153eb5]"
-          >
-            <Eye size={14} />
-            Open Nominations Board
-          </button>
-        </div>
-      </form>
-    </FormModal>
-  );
-}
-
-function NominationsBoardModal({
-  isOpen,
+function NominationsPage({
   people,
   nominationDays,
   nominations,
   revealVotes,
   revealStatus,
+  isSaving,
   busyRevealKey,
-  error,
-  onClose,
+  revealError,
+  initialTab,
+  onTabChange,
+  onBackToHouse,
+  onSaveNominations,
   onToggleRevealVote,
-  onOpenNominate,
 }: {
-  isOpen: boolean;
   people: Participant[];
   nominationDays: NominationDayRow[];
   nominations: NominationRow[];
   revealVotes: NominationRevealVoteRow[];
   revealStatus: NominationRevealStatusRow[];
+  isSaving: boolean;
   busyRevealKey: string | null;
-  error: string;
-  onClose: () => void;
+  revealError: string;
+  initialTab: NominationsPageTab;
+  onTabChange: (tab: NominationsPageTab) => void;
+  onBackToHouse: () => void;
+  onSaveNominations: (
+    nominationDate: string,
+    voterPersonId: string,
+    entries: VoterNominationDraft[],
+  ) => Promise<void>;
   onToggleRevealVote: (
     nominationDate: string,
     personId: string,
     shouldVote: boolean,
   ) => Promise<void>;
-  onOpenNominate: () => void;
 }) {
   const availableDays =
     nominationDays.length > 0
       ? nominationDays
       : DEFAULT_NOMINATION_DATES.map((d) => ({
           nomination_date: d,
-          max_nominations_per_person: 2,
         }));
 
   const [selectedDate, setSelectedDate] = useState(
     availableDays[0]?.nomination_date ?? "2026-11-24",
   );
+  const [focusedNomineeId, setFocusedNomineeId] = useState<string>("all");
+  const [expandedGrandPersonId, setExpandedGrandPersonId] = useState<string | null>(null);
+  const [voterId, setVoterId] = useState("");
+  const [nomineeDrafts, setNomineeDrafts] = useState<
+    Record<string, { points: number; comment: string }>
+  >({});
+  const [statusMessage, setStatusMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const activeVoterId = people.some((p) => p.id === voterId) ? voterId : "";
+
+  useEffect(() => {
+    if (!activeVoterId || !selectedDate) {
+      setNomineeDrafts({});
+      return;
+    }
+    const existingForVoterAndDay = nominations.filter(
+      (n) => n.nomination_date === selectedDate && n.voter_person_id === activeVoterId,
+    );
+    const nextDrafts: Record<string, { points: number; comment: string }> = {};
+    for (const row of existingForVoterAndDay) {
+      nextDrafts[row.nominee_person_id] = {
+        points: row.points > 0 ? row.points : 1,
+        comment: row.comment ?? "",
+      };
+    }
+    setNomineeDrafts(nextDrafts);
+    setError("");
+  }, [activeVoterId, selectedDate, nominations]);
 
   function getDayRevealInfo(nominationDate: string) {
     const statusRow = revealStatus.find((s) => s.nomination_date === nominationDate);
@@ -1679,33 +1388,137 @@ function NominationsBoardModal({
     };
   }
 
+  function toggleNominee(personId: string) {
+    if (!activeVoterId || personId === activeVoterId) return;
+    setError("");
+    setStatusMessage("");
+    setNomineeDrafts((current) => {
+      if (current[personId]) {
+        const copy = { ...current };
+        delete copy[personId];
+        return copy;
+      }
+      return {
+        ...current,
+        [personId]: { points: 1, comment: "" },
+      };
+    });
+  }
+
+  function setNomineePoints(personId: string, points: number) {
+    if (!activeVoterId || personId === activeVoterId) return;
+    setError("");
+    setStatusMessage("");
+    setNomineeDrafts((current) => ({
+      ...current,
+      [personId]: {
+        points,
+        comment: current[personId]?.comment ?? "",
+      },
+    }));
+  }
+
+  function setNomineeComment(personId: string, comment: string) {
+    if (!activeVoterId || personId === activeVoterId) return;
+    setError("");
+    setStatusMessage("");
+    setNomineeDrafts((current) => ({
+      ...current,
+      [personId]: {
+        points: current[personId]?.points ?? 1,
+        comment,
+      },
+    }));
+  }
+
+  const selectedEntries: VoterNominationDraft[] = Object.entries(nomineeDrafts)
+    .filter(([personId]) => personId !== activeVoterId)
+    .map(([nomineePersonId, value]) => ({
+      nomineePersonId,
+      points: value.points,
+      comment: value.comment.trim() || null,
+    }));
+
+  const selectedPointsSum = selectedEntries.reduce((sum, item) => sum + item.points, 0);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatusMessage("");
+    if (!activeVoterId) {
+      setError("Select your profile first to enter the Confession Room.");
+      return;
+    }
+    try {
+      await onSaveNominations(selectedDate, activeVoterId, selectedEntries);
+      const voterName = people.find((p) => p.id === activeVoterId)?.name ?? "Housemate";
+      setStatusMessage(
+        selectedEntries.length === 0
+          ? `Cleared ${voterName}'s nominations for ${formatTripDate(selectedDate)}.`
+          : `Saved ${voterName}'s ${selectedEntries.length} nomination${selectedEntries.length === 1 ? "" : "s"} (${selectedPointsSum} pt${selectedPointsSum === 1 ? "" : "s"}) for ${formatTripDate(selectedDate)}!`,
+      );
+    } catch (saveErr) {
+      setError(
+        saveErr instanceof Error ? saveErr.message : "Could not save nominations.",
+      );
+    }
+  }
+
   const selectedDayInfo = getDayRevealInfo(selectedDate);
   const selectedDayNominations = nominations.filter((n) => n.nomination_date === selectedDate);
+  const selectedDayTotalPoints = selectedDayNominations.reduce(
+    (sum, n) => sum + (n.points ?? 1),
+    0,
+  );
 
+  // Anonymous daily tally: sort votes received by points descending, without exposing voter identity
   const selectedDayTally = people
     .map((person) => {
       const votesReceived = selectedDayNominations.filter(
         (n) => n.nominee_person_id === person.id,
       );
-      const voters = votesReceived
-        .map((v) => people.find((p) => p.id === v.voter_person_id)?.name ?? "Someone")
-        .filter(Boolean);
+      const totalPoints = votesReceived.reduce((sum, v) => sum + (v.points ?? 1), 0);
+      const anonymousVotes = [...votesReceived]
+        .sort((a, b) => (b.points ?? 1) - (a.points ?? 1))
+        .map((v, idx) => ({
+          id: v.id,
+          ballotNumber: idx + 1,
+          points: v.points ?? 1,
+          comment: v.comment,
+        }));
       return {
         person,
-        count: votesReceived.length,
-        voters,
+        totalPoints,
+        voteCount: votesReceived.length,
+        anonymousVotes,
       };
     })
-    .sort((a, b) => b.count - a.count || a.person.name.localeCompare(b.person.name));
+    .sort(
+      (a, b) =>
+        b.totalPoints - a.totalPoints ||
+        b.voteCount - a.voteCount ||
+        a.person.name.localeCompare(b.person.name),
+    );
+
+  const filteredDayTally =
+    focusedNomineeId === "all"
+      ? selectedDayTally
+      : selectedDayTally.filter((entry) => entry.person.id === focusedNomineeId);
 
   const revealedDateSet = new Set(
     availableDays
       .filter((day) => getDayRevealInfo(day.nomination_date).isRevealed)
       .map((day) => day.nomination_date),
   );
+  const isAllDaysRevealed =
+    availableDays.length > 0 && revealedDateSet.size === availableDays.length;
 
   const revealedNominations = nominations.filter((n) =>
     revealedDateSet.has(n.nomination_date),
+  );
+  const revealedTotalPoints = revealedNominations.reduce(
+    (sum, n) => sum + (n.points ?? 1),
+    0,
   );
 
   const grandTotalTally = people
@@ -1713,10 +1526,25 @@ function NominationsBoardModal({
       const votesReceived = revealedNominations.filter(
         (n) => n.nominee_person_id === person.id,
       );
+      const totalPoints = votesReceived.reduce((sum, v) => sum + (v.points ?? 1), 0);
+      const anonymousAllDaysVotes = [...votesReceived]
+        .sort(
+          (a, b) =>
+            a.nomination_date.localeCompare(b.nomination_date) ||
+            (b.points ?? 1) - (a.points ?? 1),
+        )
+        .map((v) => ({
+          id: v.id,
+          nominationDate: v.nomination_date,
+          points: v.points ?? 1,
+          comment: v.comment,
+        }));
       const byDay = availableDays.map((day, index) => {
         const isDayRevealed = revealedDateSet.has(day.nomination_date);
         const dayPoints = isDayRevealed
-          ? votesReceived.filter((v) => v.nomination_date === day.nomination_date).length
+          ? votesReceived
+              .filter((v) => v.nomination_date === day.nomination_date)
+              .reduce((sum, v) => sum + (v.points ?? 1), 0)
           : null;
         return {
           nominationDate: day.nomination_date,
@@ -1727,347 +1555,865 @@ function NominationsBoardModal({
       });
       return {
         person,
-        totalPoints: votesReceived.length,
+        totalPoints,
+        voteCount: votesReceived.length,
+        anonymousAllDaysVotes,
         byDay,
       };
     })
-    .sort((a, b) => b.totalPoints - a.totalPoints || a.person.name.localeCompare(b.person.name));
+    .sort(
+      (a, b) =>
+        b.totalPoints - a.totalPoints ||
+        b.voteCount - a.voteCount ||
+        a.person.name.localeCompare(b.person.name),
+    );
+
+  const existingVoterChoices = selectedDayNominations.filter(
+    (n) => n.voter_person_id === activeVoterId,
+  );
 
   return (
-    <FormModal
-      isOpen={isOpen}
-      eyebrow="Pinoy Big Bruh · Eviction Tally & Reveal"
-      title="Nominations Board"
-      onClose={onClose}
-    >
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#dcc294] bg-[#f8edd7] px-4 py-3">
+    <div className="space-y-6">
+      {/* Top Hero Banner for Nominations Page */}
+      <section className="relative overflow-hidden rounded-[28px] border-2 border-[#facc15] bg-gradient-to-r from-[#0f36a8] via-[#1d4ed8] to-[#e11d2a] px-5 py-6 text-white shadow-lg sm:px-8 sm:py-8">
+        <div className="absolute -right-12 -top-24 size-64 rounded-full border-[36px] border-[#fde047]/15" />
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs font-bold text-[#153eb5]">
-              {revealedDateSet.size} of {availableDays.length} days revealed
+            <button
+              type="button"
+              onClick={onBackToHouse}
+              className="mb-3 inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#fde047]/50 bg-black/25 px-3 text-xs font-bold text-[#fde047] transition hover:bg-black/40"
+            >
+              <ChevronLeft size={14} />
+              Back to The House
+            </button>
+            <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#fde047]">
+              <Sparkles size={13} />
+              Confession Room · Anonymous Eviction Tally
             </p>
-            <p className="text-[11px] text-[#5c4b32]">
-              All {selectedDayInfo.totalPeople || people.length} housemates must vote to reveal a day before its nominations are shown.
+            <h1 className="mt-1.5 text-[clamp(1.6rem,4vw,2.6rem)] font-extrabold tracking-[-0.04em] text-[#fffbeb]">
+              Housemate Nominations Board
+            </h1>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-[#fef9c3]/90 sm:text-sm">
+              View daily eviction tallies, anonymous nomination points, and reasons once all housemates vote to reveal a day—or step into the Confession Room to cast or edit your secret votes.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onOpenNominate();
-            }}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[#e11d2a] px-3.5 text-xs font-extrabold uppercase tracking-wide text-[#fde047] shadow-xs ring-1 ring-[#facc15] transition hover:brightness-110"
-          >
-            <Flame size={13} />
-            Cast / Edit Votes
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#fde047]/40 bg-[#0b1942]/45 p-1.5 backdrop-blur-xs">
+            <button
+              type="button"
+              onClick={() => onTabChange("board")}
+              aria-pressed={initialTab === "board"}
+              className={`inline-flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-extrabold uppercase tracking-wider transition ${
+                initialTab === "board"
+                  ? "bg-[#facc15] text-[#172554] shadow-sm"
+                  : "text-white hover:bg-white/10"
+              }`}
+            >
+              <Trophy size={15} />
+              Eviction Board & Tally
+            </button>
+            <button
+              type="button"
+              onClick={() => onTabChange("cast")}
+              aria-pressed={initialTab === "cast"}
+              className={`inline-flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-extrabold uppercase tracking-wider transition ${
+                initialTab === "cast"
+                  ? "bg-[#e11d2a] text-[#fde047] shadow-sm ring-2 ring-[#fde047]"
+                  : "text-white hover:bg-white/10"
+              }`}
+            >
+              <Flame size={15} />
+              Confession Room (Vote)
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Shared Day Selector Bar (Day 1 - Day 6) */}
+      <section className="rounded-[24px] border-2 border-[#dcc294] bg-[#fffcf5] p-5 shadow-xs">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
+              6 Nomination Days · Nov 24 – Nov 29, 2026
+            </p>
+            <h2 className="text-base font-bold text-[#153eb5]">
+              Select Nomination Day
+            </h2>
+          </div>
+          <span className="rounded-full border border-[#dcc294] bg-[#f8edd7] px-3 py-1 text-xs font-bold text-[#153eb5]">
+            {revealedDateSet.size} of {availableDays.length} days revealed
+          </span>
         </div>
 
-        {/* 1. Day Tabs */}
-        <div>
-          <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#153eb5]">
-            Select Day to Vote Reveal or View Tally
-          </span>
-          <div className="-mx-1 grid grid-cols-2 gap-2 px-1 sm:grid-cols-3">
-            {availableDays.map((day, idx) => {
-              const isSelected = day.nomination_date === selectedDate;
-              const info = getDayRevealInfo(day.nomination_date);
-              const dayVotesCount = nominations.filter(
-                (n) => n.nomination_date === day.nomination_date,
-              ).length;
-              return (
-                <button
-                  key={day.nomination_date}
-                  type="button"
-                  onClick={() => setSelectedDate(day.nomination_date)}
-                  aria-pressed={isSelected}
-                  className={`rounded-2xl border-2 px-3 py-2.5 text-left transition ${
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+          {availableDays.map((day, idx) => {
+            const isSelected = day.nomination_date === selectedDate;
+            const info = getDayRevealInfo(day.nomination_date);
+            const dayRows = nominations.filter(
+              (n) => n.nomination_date === day.nomination_date,
+            );
+            const dayPointsSum = dayRows.reduce((sum, n) => sum + (n.points ?? 1), 0);
+            return (
+              <button
+                key={day.nomination_date}
+                type="button"
+                onClick={() => {
+                  setSelectedDate(day.nomination_date);
+                  setStatusMessage("");
+                  setError("");
+                }}
+                aria-pressed={isSelected}
+                className={`rounded-2xl border-2 p-3 text-left transition ${
+                  isSelected
+                    ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-md"
+                    : info.isRevealed
+                      ? "border-emerald-300 bg-emerald-50/70 text-[#172554] hover:bg-emerald-50"
+                      : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] opacity-85">
+                    DAY {idx + 1}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      info.isRevealed
+                        ? isSelected
+                          ? "bg-emerald-400/25 text-emerald-200"
+                          : "bg-emerald-600 text-white"
+                        : isSelected
+                          ? "bg-black/25 text-[#fde047]"
+                          : "bg-[#e5cfa8] text-[#5c4b32]"
+                    }`}
+                  >
+                    {info.isRevealed ? <Unlock size={10} /> : <Lock size={10} />}
+                    {info.revealVoteCount}/{info.totalPeople}
+                  </span>
+                </div>
+                <span className="mt-1.5 block text-sm font-extrabold">
+                  {formatTripDate(day.nomination_date)}
+                </span>
+                <span
+                  className={`mt-1 block text-[11px] font-semibold ${
                     isSelected
-                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
+                      ? "text-white/90"
                       : info.isRevealed
-                        ? "border-emerald-300 bg-emerald-50/70 text-[#172554] hover:bg-emerald-50"
-                        : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                        ? "text-emerald-700"
+                        : "text-[#786242]"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] opacity-85">
-                      DAY {idx + 1}
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                        info.isRevealed
-                          ? isSelected
-                            ? "bg-emerald-400/25 text-emerald-200"
-                            : "bg-emerald-600 text-white"
-                          : isSelected
-                            ? "bg-black/25 text-[#fde047]"
-                            : "bg-[#e5cfa8] text-[#5c4b32]"
+                  {info.isRevealed
+                    ? `${dayPointsSum} pt${dayPointsSum === 1 ? "" : "s"} · ${dayRows.length} vote${dayRows.length === 1 ? "" : "s"}`
+                    : "Sealed · Vote to reveal"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {initialTab === "board" ? (
+        <div className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr] lg:items-start">
+          {/* Left Column: Selected Day Reveal Consent + Anonymous Nominated Persons Votes & Reasons */}
+          <div className="space-y-6">
+            {/* Reveal Consent Card */}
+            <section className="rounded-[24px] border-2 border-[#1d4ed8]/30 bg-gradient-to-br from-[#eff6ff] via-white to-[#fefce8] p-5 shadow-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#1d4ed8]">
+                    Unanimous Reveal Consent · {formatTripDate(selectedDate)}
+                  </p>
+                  <h3 className="mt-0.5 text-base font-bold text-[#172554]">
+                    Vote to Reveal {formatTripDate(selectedDate)} Nominations
+                  </h3>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-extrabold ${
+                    selectedDayInfo.isRevealed
+                      ? "bg-emerald-600 text-white"
+                      : "bg-[#1d4ed8] text-[#fde047]"
+                  }`}
+                >
+                  {selectedDayInfo.isRevealed ? <Eye size={14} /> : <EyeOff size={14} />}
+                  {selectedDayInfo.revealVoteCount} / {selectedDayInfo.totalPeople} ready to reveal
+                </span>
+              </div>
+
+              <p className="mt-1.5 text-xs text-[#5c4b32]">
+                Tap your name when you are ready to reveal {formatTripDate(selectedDate)}’s nominations. Tap again anytime to withdraw your consent and re-lock the day. All voter identities remain anonymous even when revealed!
+              </p>
+
+              <div className="mt-3.5 flex flex-wrap gap-2">
+                {people.map((person) => {
+                  const hasVoted = selectedDayInfo.voterIds.has(person.id);
+                  const busyKey = `${selectedDate}:${person.id}`;
+                  const isBusy = busyRevealKey === busyKey;
+                  return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      disabled={isBusy}
+                      aria-pressed={hasVoted}
+                      onClick={() =>
+                        void onToggleRevealVote(selectedDate, person.id, !hasVoted)
+                      }
+                      className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3.5 py-1.5 text-xs font-bold transition disabled:opacity-55 ${
+                        hasVoted
+                          ? "border-emerald-600 bg-emerald-600 text-white shadow-xs hover:bg-emerald-700"
+                          : "border-[#dcc294] bg-white text-[#172554] hover:border-[#1d4ed8] hover:bg-[#f8edd7]"
                       }`}
                     >
-                      {info.isRevealed ? <Unlock size={10} /> : <Lock size={10} />}
-                      {info.revealVoteCount}/{info.totalPeople}
-                    </span>
-                  </div>
-                  <span className="mt-1 block text-xs font-bold">
-                    {formatTripDate(day.nomination_date)}
-                  </span>
-                  <span
-                    className={`mt-0.5 block text-[10px] font-semibold ${
-                      isSelected
-                        ? "text-white/90"
-                        : info.isRevealed
-                          ? "text-emerald-700"
-                          : "text-[#786242]"
-                    }`}
-                  >
-                    {info.isRevealed
-                      ? `Revealed · ${dayVotesCount} vote${dayVotesCount === 1 ? "" : "s"}`
-                      : "Hidden until all vote"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                      <PersonAvatar
+                        name={person.name}
+                        color={person.color}
+                        sizeClass="size-5 text-[9px]"
+                      />
+                      <span>{person.name}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                          hasVoted
+                            ? "bg-black/20 text-[#fde047]"
+                            : "bg-[#f8edd7] text-[#786242]"
+                        }`}
+                      >
+                        {isBusy ? "…" : hasVoted ? "Ready · Withdraw" : "Vote Reveal"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
 
-        {/* 2. Reveal Voting Box for Selected Day */}
-        <div className="rounded-2xl border-2 border-[#1d4ed8]/30 bg-gradient-to-br from-[#eff6ff] via-white to-[#fefce8] p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#1d4ed8]">
-                Reveal Consent · {formatTripDate(selectedDate)}
-              </p>
-              <h3 className="mt-0.5 text-sm font-bold text-[#172554]">
-                Vote to Reveal {formatTripDate(selectedDate)} Nominations
-              </h3>
-            </div>
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold ${
-                selectedDayInfo.isRevealed
-                  ? "bg-emerald-600 text-white"
-                  : "bg-[#1d4ed8] text-[#fde047]"
-              }`}
-            >
-              {selectedDayInfo.isRevealed ? <Eye size={13} /> : <EyeOff size={13} />}
-              {selectedDayInfo.revealVoteCount} / {selectedDayInfo.totalPeople} voted
-            </span>
-          </div>
+              {revealError && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700"
+                >
+                  {revealError}
+                </p>
+              )}
+            </section>
 
-          <p className="mt-1.5 text-xs text-[#5c4b32]">
-            Tap your name to vote to reveal this day’s nominations. Tap again anytime to withdraw your reveal vote and hide the results.
-          </p>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {people.map((person) => {
-              const hasVoted = selectedDayInfo.voterIds.has(person.id);
-              const busyKey = `${selectedDate}:${person.id}`;
-              const isBusy = busyRevealKey === busyKey;
-              return (
-                <button
-                  key={person.id}
-                  type="button"
-                  disabled={isBusy}
-                  aria-pressed={hasVoted}
-                  onClick={() =>
-                    void onToggleRevealVote(selectedDate, person.id, !hasVoted)
-                  }
-                  className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3 py-1.5 text-xs font-bold transition disabled:opacity-55 ${
-                    hasVoted
-                      ? "border-emerald-600 bg-emerald-600 text-white shadow-xs hover:bg-emerald-700"
-                      : "border-[#dcc294] bg-white text-[#172554] hover:border-[#1d4ed8] hover:bg-[#f8edd7]"
+            {/* Selected Day Nominated Housemates Votes & Anonymous Reasons */}
+            <section className="rounded-[24px] border-2 border-[#dcc294] bg-[#fffcf5] p-5 shadow-xs">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
+                    Daily Anonymous Eviction Tally · {formatTripDate(selectedDate)}
+                  </p>
+                  <h3 className="mt-0.5 text-lg font-extrabold text-[#153eb5]">
+                    {selectedDayInfo.isRevealed
+                      ? `Nominated Housemates, Points & Reasons (${selectedDayTotalPoints} total pt${selectedDayTotalPoints === 1 ? "" : "s"})`
+                      : `Nominations Locked for ${formatTripDate(selectedDate)}`}
+                  </h3>
+                </div>
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold uppercase tracking-wider ${
+                    selectedDayInfo.isRevealed
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-[#fee2e2] text-[#991b1b]"
                   }`}
                 >
-                  <PersonAvatar
-                    name={person.name}
-                    color={person.color}
-                    sizeClass="size-5 text-[9px]"
-                  />
-                  <span>{person.name}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                      hasVoted
-                        ? "bg-black/20 text-[#fde047]"
-                        : "bg-[#f8edd7] text-[#786242]"
-                    }`}
-                  >
-                    {isBusy ? "…" : hasVoted ? "Voted · Withdraw" : "Vote Reveal"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                  {selectedDayInfo.isRevealed ? (
+                    <>
+                      <Unlock size={13} />
+                      Revealed · Voters Hidden
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={13} />
+                      Locked ({selectedDayInfo.revealVoteCount}/{selectedDayInfo.totalPeople})
+                    </>
+                  )}
+                </span>
+              </div>
 
-          {error && (
-            <p
-              role="alert"
-              className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700"
-            >
-              {error}
-            </p>
-          )}
-        </div>
-
-        {/* 3. Selected Day Nominations Tally (Shown ONLY when is_revealed is true) */}
-        <div className="rounded-2xl border-2 border-[#dcc294] bg-[#fffcf5] p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
-                Daily Eviction Board · {formatTripDate(selectedDate)}
-              </p>
-              <h4 className="text-sm font-bold text-[#153eb5]">
-                {selectedDayInfo.isRevealed
-                  ? `Nominations Revealed (${selectedDayNominations.length} vote${selectedDayNominations.length === 1 ? "" : "s"})`
-                  : "Nominations Hidden"}
-              </h4>
-            </div>
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider ${
-                selectedDayInfo.isRevealed
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-[#fee2e2] text-[#991b1b]"
-              }`}
-            >
               {selectedDayInfo.isRevealed ? (
                 <>
-                  <Unlock size={11} />
-                  Revealed
-                </>
-              ) : (
-                <>
-                  <Lock size={11} />
-                  Locked ({selectedDayInfo.revealVoteCount}/{selectedDayInfo.totalPeople})
-                </>
-              )}
-            </span>
-          </div>
-
-          {selectedDayInfo.isRevealed ? (
-            <div className="space-y-2">
-              {selectedDayTally.map(({ person, count, voters }) => (
-                <div
-                  key={person.id}
-                  className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-xs ${
-                    count > 0
-                      ? "border-[#e11d2a]/40 bg-[#fff5f5]"
-                      : "border-[#e8d7b5] bg-white"
-                  }`}
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <PersonAvatar
-                      name={person.name}
-                      color={person.color}
-                      sizeClass="size-7 text-[10px]"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate font-bold text-[#172554]">{person.name}</p>
-                      <p className="truncate text-[10px] text-[#786242]">
-                        {voters.length > 0
-                          ? `Nominated by: ${voters.join(", ")}`
-                          : "No nominations received on this day"}
-                      </p>
-                    </div>
-                  </div>
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${
-                      count > 0
-                        ? "bg-[#e11d2a] text-[#fde047]"
-                        : "bg-[#f8edd7] text-[#786242]"
-                    }`}
-                  >
-                    {count} pt{count === 1 ? "" : "s"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#dcc294] bg-[#f8edd7]/50 px-4 py-7 text-center">
-              <span className="grid size-11 place-items-center rounded-full bg-[#1d4ed8]/10 text-[#1d4ed8]">
-                <Lock size={20} />
-              </span>
-              <p className="mt-2.5 text-xs font-bold text-[#172554]">
-                {formatTripDate(selectedDate)} nominations are still sealed
-              </p>
-              <p className="mt-1 max-w-md text-[11px] text-[#786242]">
-                {selectedDayInfo.revealVoteCount} of {selectedDayInfo.totalPeople} housemates have voted to reveal this day. Once all {selectedDayInfo.totalPeople} housemates vote above, the nominees and voters for {formatTripDate(selectedDate)} will unlock!
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* 4. Grand Total Board across all days */}
-        <div className="rounded-2xl border-2 border-[#facc15] bg-gradient-to-br from-[#153eb5] via-[#1d4ed8] to-[#991b1b] p-4 text-white shadow-md">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#fde047]">
-                <Trophy size={12} />
-                All Days · Eviction Leaderboard
-              </p>
-              <h4 className="mt-0.5 text-base font-extrabold text-white">
-                Grand Total Nominations ({revealedNominations.length} revealed vote
-                {revealedNominations.length === 1 ? "" : "s"})
-              </h4>
-            </div>
-            <span className="rounded-full bg-black/25 px-3 py-1 text-[11px] font-bold text-[#fde047]">
-              {revealedDateSet.size}/{availableDays.length} days unlocked
-            </span>
-          </div>
-
-          <div className="space-y-2">
-            {grandTotalTally.map(({ person, totalPoints, byDay }, index) => (
-              <div
-                key={person.id}
-                className="rounded-xl border border-white/15 bg-white/95 px-3 py-2.5 text-xs text-[#172554]"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#f8edd7] text-[10px] font-extrabold text-[#153eb5]">
-                      #{index + 1}
-                    </span>
-                    <PersonAvatar
-                      name={person.name}
-                      color={person.color}
-                      sizeClass="size-7 text-[10px]"
-                    />
-                    <span className="truncate font-bold">{person.name}</span>
-                  </div>
-                  <span
-                    className={`rounded-full px-3 py-0.5 text-xs font-extrabold ${
-                      totalPoints > 0
-                        ? "bg-[#e11d2a] text-[#fde047]"
-                        : "bg-[#f8edd7] text-[#786242]"
-                    }`}
-                  >
-                    {totalPoints} total pt{totalPoints === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <div className="mt-2 grid grid-cols-6 gap-1">
-                  {byDay.map((d) => (
-                    <div
-                      key={d.nominationDate}
-                      className={`rounded-lg px-1.5 py-1 text-center text-[10px] ${
-                        d.isDayRevealed
-                          ? d.dayPoints && d.dayPoints > 0
-                            ? "bg-[#fee2e2] font-bold text-[#991b1b]"
-                            : "bg-[#f8edd7] text-[#5c4b32]"
-                          : "bg-slate-100 text-slate-400"
-                      }`}
-                      title={`${formatTripDate(d.nominationDate)}: ${
-                        d.isDayRevealed ? `${d.dayPoints} pt(s)` : "Hidden"
+                  {/* Filter pills to inspect all or a specific nominated housemate's votes & reasons */}
+                  <div className="mb-4 flex flex-wrap items-center gap-1.5 border-b border-[#dcc294] pb-3">
+                    <button
+                      type="button"
+                      onClick={() => setFocusedNomineeId("all")}
+                      aria-pressed={focusedNomineeId === "all"}
+                      className={`min-h-8 rounded-full px-3 py-1 text-xs font-bold transition ${
+                        focusedNomineeId === "all"
+                          ? "bg-[#1d4ed8] text-[#fde047] shadow-xs"
+                          : "border border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
                       }`}
                     >
-                      <span className="block text-[8px] font-bold uppercase opacity-75">
-                        D{d.dayNumber}
-                      </span>
-                      <span>{d.isDayRevealed ? `${d.dayPoints}pt` : "🔒"}</span>
-                    </div>
-                  ))}
+                      All Housemates ({people.length})
+                    </button>
+                    {selectedDayTally.map(({ person, totalPoints }) => (
+                      <button
+                        key={person.id}
+                        type="button"
+                        onClick={() => setFocusedNomineeId(person.id)}
+                        aria-pressed={focusedNomineeId === person.id}
+                        className={`inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold transition ${
+                          focusedNomineeId === person.id
+                            ? "bg-[#e11d2a] text-[#fde047] shadow-xs"
+                            : totalPoints > 0
+                              ? "border border-[#e11d2a]/40 bg-[#fff5f5] text-[#991b1b] hover:bg-[#fee2e2]"
+                              : "border border-[#dcc294] bg-white text-[#786242] hover:bg-[#f8edd7]"
+                        }`}
+                      >
+                        <span>{person.name}</span>
+                        <span className="rounded-full bg-black/10 px-1.5 py-0.2 text-[10px]">
+                          {totalPoints}pt
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-3.5">
+                    {filteredDayTally.map(({ person, totalPoints, voteCount, anonymousVotes }) => {
+                      const rankIndex = selectedDayTally.findIndex(
+                        (item) => item.person.id === person.id,
+                      );
+                      return (
+                        <article
+                          key={person.id}
+                          className={`rounded-2xl border-2 p-4 transition ${
+                            totalPoints > 0
+                              ? "border-[#e11d2a]/45 bg-gradient-to-br from-[#fff5f5] via-white to-[#fefce8] shadow-xs"
+                              : "border-[#e8d7b5] bg-white"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                className={`grid size-7 shrink-0 place-items-center rounded-full text-xs font-extrabold ${
+                                  totalPoints > 0
+                                    ? "bg-[#e11d2a] text-[#fde047]"
+                                    : "bg-[#f8edd7] text-[#786242]"
+                                }`}
+                              >
+                                #{rankIndex + 1}
+                              </span>
+                              <PersonAvatar
+                                name={person.name}
+                                color={person.color}
+                                sizeClass="size-10 text-xs"
+                                borderClass={
+                                  totalPoints > 0
+                                    ? "border-2 border-[#e11d2a]"
+                                    : "border border-[#dcc294]"
+                                }
+                              />
+                              <div className="min-w-0">
+                                <h4 className="truncate text-base font-extrabold text-[#172554]">
+                                  {person.name}
+                                </h4>
+                                <p className="text-xs font-medium text-[#786242]">
+                                  {voteCount > 0
+                                    ? `Received ${voteCount} anonymous nomination${voteCount === 1 ? "" : "s"}`
+                                    : "0 nominations received on this day"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`rounded-full px-3.5 py-1 text-sm font-black ${
+                                  totalPoints > 0
+                                    ? "bg-[#e11d2a] text-[#fde047] shadow-xs ring-2 ring-[#facc15]"
+                                    : "bg-[#f8edd7] text-[#786242]"
+                                }`}
+                              >
+                                {totalPoints} pt{totalPoints === 1 ? "" : "s"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {anonymousVotes.length > 0 && (
+                            <div className="mt-3.5 border-t border-[#e11d2a]/20 pt-3">
+                              <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.14em] text-[#991b1b]">
+                                Anonymous Votes & Reasons for {person.name}
+                              </p>
+                              <ul className="space-y-2">
+                                {anonymousVotes.map((vote) => (
+                                  <li
+                                    key={vote.id}
+                                    className="rounded-xl border border-[#dcc294] bg-white p-3 shadow-2xs"
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#153eb5]">
+                                        <span className="grid size-5 place-items-center rounded-full bg-[#1d4ed8]/10 text-[#1d4ed8]">
+                                          <EyeOff size={11} />
+                                        </span>
+                                        Anonymous Housemate · Ballot #{vote.ballotNumber}
+                                      </span>
+                                      <span
+                                        className={`rounded-full px-2.5 py-0.5 text-xs font-extrabold ${
+                                          vote.points >= 3
+                                            ? "bg-[#e11d2a] text-[#fde047]"
+                                            : vote.points === 2
+                                              ? "bg-[#f59e0b] text-[#172554]"
+                                              : "bg-[#1d4ed8] text-white"
+                                        }`}
+                                      >
+                                        +{vote.points} pt{vote.points === 1 ? "" : "s"}
+                                      </span>
+                                    </div>
+                                    {vote.comment ? (
+                                      <p className="mt-2 rounded-lg bg-[#fffcf5] px-3 py-2 text-xs leading-5 text-[#172554] italic border border-[#e8d7b5]">
+                                        “{vote.comment}”
+                                      </p>
+                                    ) : (
+                                      <p className="mt-1.5 text-[11px] italic text-[#9c8462]">
+                                        No reason written.
+                                      </p>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#dcc294] bg-[#f8edd7]/55 px-6 py-12 text-center">
+                  <span className="grid size-14 place-items-center rounded-full bg-[#1d4ed8]/10 text-[#1d4ed8]">
+                    <Lock size={26} />
+                  </span>
+                  <p className="mt-3 text-base font-extrabold text-[#172554]">
+                    {formatTripDate(selectedDate)} Nominations Are Still Sealed
+                  </p>
+                  <p className="mt-1.5 max-w-md text-xs leading-5 text-[#786242]">
+                    {selectedDayInfo.revealVoteCount} of {selectedDayInfo.totalPeople} housemates have voted to reveal this day. Once all {selectedDayInfo.totalPeople} housemates tap their name above, each nominee’s points and anonymous reasons will appear here!
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onTabChange("cast")}
+                    className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-full bg-[#e11d2a] px-5 text-xs font-extrabold uppercase tracking-wider text-[#fde047] shadow-xs ring-2 ring-[#facc15] transition hover:brightness-110"
+                  >
+                    <Flame size={14} />
+                    Go to Confession Room to Cast Votes
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* Right Column: Grand Total Eviction Leaderboard Across All Days (Shown ONLY when all days are revealed) */}
+          <aside className="space-y-6">
+            <section className="rounded-[24px] border-2 border-[#facc15] bg-gradient-to-br from-[#153eb5] via-[#1d4ed8] to-[#991b1b] p-5 text-white shadow-lg">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#fde047]">
+                    <Trophy size={13} />
+                    All 6 Days · Eviction Leaderboard
+                  </p>
+                  <h3 className="mt-0.5 text-lg font-extrabold text-white">
+                    {isAllDaysRevealed
+                      ? `Grand Total (${revealedTotalPoints} pt${revealedTotalPoints === 1 ? "" : "s"})`
+                      : "Grand Total Locked"}
+                  </h3>
+                </div>
+                <span className="rounded-full bg-black/25 px-3 py-1 text-xs font-bold text-[#fde047]">
+                  {revealedDateSet.size}/{availableDays.length} days unlocked
+                </span>
+              </div>
+
+              {isAllDaysRevealed ? (
+                <>
+                  <p className="mb-4 text-xs text-[#fef9c3]/90">
+                    All {availableDays.length} days are revealed! Tap a housemate to view all their anonymous votes & reasons across the trip.
+                  </p>
+
+                  <div className="space-y-2.5">
+                    {grandTotalTally.map(
+                      ({ person, totalPoints, voteCount, anonymousAllDaysVotes, byDay }, index) => {
+                        const isExpanded = expandedGrandPersonId === person.id;
+                        return (
+                          <div
+                            key={person.id}
+                            className="rounded-2xl border border-white/20 bg-white/95 p-3.5 text-xs text-[#172554] shadow-xs"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-2.5">
+                                <span
+                                  className={`grid size-6 shrink-0 place-items-center rounded-full text-[10px] font-extrabold ${
+                                    index === 0 && totalPoints > 0
+                                      ? "bg-[#e11d2a] text-[#fde047]"
+                                      : "bg-[#f8edd7] text-[#153eb5]"
+                                  }`}
+                                >
+                                  #{index + 1}
+                                </span>
+                                <PersonAvatar
+                                  name={person.name}
+                                  color={person.color}
+                                  sizeClass="size-8 text-[10px]"
+                                />
+                                <div className="min-w-0">
+                                  <span className="block truncate text-sm font-extrabold">
+                                    {person.name}
+                                  </span>
+                                  <span className="block text-[10px] text-[#786242]">
+                                    {voteCount} anonymous vote{voteCount === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              </div>
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-black ${
+                                  totalPoints > 0
+                                    ? "bg-[#e11d2a] text-[#fde047]"
+                                    : "bg-[#f8edd7] text-[#786242]"
+                                }`}
+                              >
+                                {totalPoints} total pt{totalPoints === 1 ? "" : "s"}
+                              </span>
+                            </div>
+
+                            <div className="mt-2.5 grid grid-cols-6 gap-1">
+                              {byDay.map((d) => (
+                                <button
+                                  key={d.nominationDate}
+                                  type="button"
+                                  onClick={() => setSelectedDate(d.nominationDate)}
+                                  className={`rounded-lg px-1.5 py-1 text-center text-[10px] transition ${
+                                    d.dayPoints && d.dayPoints > 0
+                                      ? "bg-[#fee2e2] font-bold text-[#991b1b] hover:bg-[#fecaca]"
+                                      : "bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                                  }`}
+                                  title={`${formatTripDate(d.nominationDate)}: ${d.dayPoints} pt(s)`}
+                                >
+                                  <span className="block text-[8px] font-bold uppercase opacity-75">
+                                    D{d.dayNumber}
+                                  </span>
+                                  <span>{d.dayPoints}pt</span>
+                                </button>
+                              ))}
+                            </div>
+
+                            {anonymousAllDaysVotes.length > 0 && (
+                              <div className="mt-2.5 border-t border-[#e8d7b5] pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedGrandPersonId(isExpanded ? null : person.id)
+                                  }
+                                  className="flex w-full items-center justify-between text-[11px] font-bold text-[#153eb5] hover:underline"
+                                >
+                                  <span>
+                                    {isExpanded ? "Hide" : "View"} all {anonymousAllDaysVotes.length} vote
+                                    {anonymousAllDaysVotes.length === 1 ? "" : "s"} & reasons
+                                  </span>
+                                  <ChevronDown
+                                    size={14}
+                                    className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                  />
+                                </button>
+
+                                {isExpanded && (
+                                  <ul className="mt-2 space-y-1.5">
+                                    {anonymousAllDaysVotes.map((v) => (
+                                      <li
+                                        key={v.id}
+                                        className="rounded-lg border border-[#dcc294] bg-[#fffcf5] px-2.5 py-2"
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="text-[10px] font-bold text-[#786242]">
+                                            {formatTripDate(v.nominationDate)} · Anonymous
+                                          </span>
+                                          <span className="rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-extrabold text-[#991b1b]">
+                                            +{v.points} pt{v.points === 1 ? "" : "s"}
+                                          </span>
+                                        </div>
+                                        {v.comment ? (
+                                          <p className="mt-1 text-[11px] italic text-[#172554]">
+                                            “{v.comment}”
+                                          </p>
+                                        ) : (
+                                          <p className="mt-1 text-[10px] italic text-[#9c8462]">
+                                            No reason written.
+                                          </p>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-[#fde047]/45 bg-[#0b1942]/40 px-5 py-10 text-center">
+                  <span className="grid size-12 place-items-center rounded-full bg-[#fde047]/15 text-[#fde047]">
+                    <Lock size={22} />
+                  </span>
+                  <p className="mt-3 text-sm font-extrabold text-[#fffbeb]">
+                    Grand Tally Is Hidden Until All {availableDays.length} Days Are Revealed
+                  </p>
+                  <p className="mt-1.5 text-xs leading-5 text-[#fef9c3]/85">
+                    Currently {revealedDateSet.size} of {availableDays.length} days have been unlocked. Once every housemate votes to reveal all {availableDays.length} days (Nov 24–29), the overall Grand Total Eviction Leaderboard will unlock here!
+                  </p>
+                </div>
+              )}
+            </section>
+          </aside>
+        </div>
+      ) : (
+        /* Confession Room Tab: Cast or Edit Anonymous Nominations */
+        <section className="rounded-[24px] border-2 border-[#dcc294] bg-[#fffcf5] p-5 shadow-xs sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#dcc294] pb-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
+                Confession Room · Secret Ballot ({formatTripDate(selectedDate)})
+              </p>
+              <h2 className="mt-0.5 text-lg font-extrabold text-[#153eb5]">
+                Cast or Edit Your Nominations
+              </h2>
+              <p className="mt-1 text-xs text-[#5c4b32]">
+                Your identity is hidden on the Eviction Board. Only the points and reasons you submit will be shown once the day is revealed.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onTabChange("board")}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[#1d4ed8] bg-[#1d4ed8] px-4 text-xs font-bold text-[#fde047] transition hover:bg-[#153eb5]"
+            >
+              <Eye size={14} />
+              View Eviction Board & Tally
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#153eb5]">
+                  1. Who is entering the Confession Room?
+                </span>
+                {activeVoterId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoterId("");
+                      setNomineeDrafts({});
+                      setStatusMessage("");
+                      setError("");
+                    }}
+                    className="text-xs font-semibold text-[#e11d2a] hover:underline"
+                  >
+                    Lock / Switch voter
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {people.map((person) => {
+                  const isVoter = person.id === activeVoterId;
+                  return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      aria-pressed={isVoter}
+                      onClick={() => {
+                        setVoterId(person.id);
+                        setStatusMessage("");
+                        setError("");
+                      }}
+                      className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3.5 py-1.5 text-xs font-bold transition ${
+                        isVoter
+                          ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
+                          : "border-[#dcc294] bg-white text-[#5c4b32] hover:bg-[#f8edd7]"
+                      }`}
+                    >
+                      <PersonAvatar
+                        name={person.name}
+                        color={person.color}
+                        sizeClass="size-5 text-[9px]"
+                      />
+                      <span>{person.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {!activeVoterId ? (
+              <div className="rounded-2xl border-2 border-dashed border-[#dcc294] bg-[#f8edd7]/50 px-5 py-10 text-center">
+                <p className="text-sm font-bold text-[#153eb5]">
+                  Tap your name above to enter the Confession Room
+                </p>
+                <p className="mt-1 text-xs text-[#786242]">
+                  To keep everyone’s ballot private, select your own profile before viewing or editing your nominations for {formatTripDate(selectedDate)}.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border-2 border-[#e11d2a]/35 bg-gradient-to-br from-[#fff5f5] via-white to-[#fefce8] p-4 sm:p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-[#e11d2a]">
+                      2. Nominate Housemates & Assign 1, 2, or 3 Points ({formatTripDate(selectedDate)})
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[#5c4b32]">
+                      {existingVoterChoices.length > 0
+                        ? "Editing your saved nominations for this day. Pick any number of housemates, choose 1, 2, or 3 points, and add your optional reason."
+                        : "Nominate any number of housemates, assign 1, 2, or 3 points each, and write an optional reason."}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#e11d2a] px-3.5 py-1 text-xs font-bold text-[#fde047]">
+                    {selectedEntries.length} nominated · {selectedPointsSum} pt
+                    {selectedPointsSum === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  {people
+                    .filter((person) => person.id !== activeVoterId)
+                    .map((person) => {
+                      const draft = nomineeDrafts[person.id];
+                      const isNominated = Boolean(draft);
+                      return (
+                        <div
+                          key={person.id}
+                          className={`rounded-2xl border-2 p-3.5 transition ${
+                            isNominated
+                              ? "border-[#e11d2a] bg-[#fff5f5] shadow-xs"
+                              : "border-[#dcc294] bg-white hover:border-[#1d4ed8]"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            <button
+                              type="button"
+                              aria-pressed={isNominated}
+                              onClick={() => toggleNominee(person.id)}
+                              className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                            >
+                              <PersonAvatar
+                                name={person.name}
+                                color={person.color}
+                                sizeClass="size-9 text-xs"
+                                borderClass={
+                                  isNominated
+                                    ? "border-2 border-[#e11d2a]"
+                                    : "border border-[#dcc294]"
+                                }
+                              />
+                              <div className="min-w-0">
+                                <span className="block truncate text-sm font-bold text-[#172554]">
+                                  {person.name}
+                                </span>
+                                <span className="block text-[10px] text-[#786242]">
+                                  {isNominated
+                                    ? `${draft.points} point${draft.points === 1 ? "" : "s"} assigned`
+                                    : "Tap a point button to nominate"}
+                                </span>
+                              </div>
+                            </button>
+
+                            <div className="flex items-center gap-1.5">
+                              {NOMINATION_POINT_OPTIONS.map((pt) => {
+                                const isPointActive = isNominated && draft.points === pt;
+                                return (
+                                  <button
+                                    key={pt}
+                                    type="button"
+                                    aria-pressed={isPointActive}
+                                    onClick={() => setNomineePoints(person.id, pt)}
+                                    className={`min-h-8 rounded-full border px-2.5 py-1 text-[11px] font-extrabold transition ${
+                                      isPointActive
+                                        ? "border-[#facc15] bg-[#e11d2a] text-[#fde047] shadow-xs ring-1 ring-[#facc15]"
+                                        : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:border-[#1d4ed8] hover:bg-[#fef08a]"
+                                    }`}
+                                  >
+                                    {pt} pt{pt === 1 ? "" : "s"}
+                                  </button>
+                                );
+                              })}
+                              {isNominated && (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleNominee(person.id)}
+                                  className="min-h-8 rounded-full bg-[#991b1b] px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-white transition hover:bg-[#7f1d1d]"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {isNominated && (
+                            <div className="mt-3 border-t border-[#e11d2a]/20 pt-2.5">
+                              <label className="block">
+                                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#991b1b]">
+                                  Reason for nominating {person.name} (optional · shown anonymously)
+                                </span>
+                                <input
+                                  type="text"
+                                  value={draft.comment}
+                                  onChange={(event) =>
+                                    setNomineeComment(person.id, event.target.value)
+                                  }
+                                  placeholder={`Why does ${person.name} get ${draft.points} point${draft.points === 1 ? "" : "s"}? (optional)`}
+                                  className="min-h-9 w-full rounded-xl border border-[#dcc294] bg-white px-3 text-xs text-[#172554] placeholder:text-[#9c8462] focus:border-[#1d4ed8] focus:outline-hidden"
+                                />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {statusMessage && (
+                  <p
+                    role="status"
+                    className="mt-4 rounded-xl border border-[#eab308] bg-[#fef08a] px-3.5 py-2.5 text-xs font-semibold text-[#713f12]"
+                  >
+                    {statusMessage}
+                  </p>
+                )}
+                {error && (
+                  <p
+                    role="alert"
+                    className="mt-4 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700"
+                  >
+                    {error}
+                  </p>
+                )}
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[#dcc294] pt-4">
+                  {selectedEntries.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setNomineeDrafts({})}
+                      className="min-h-9 rounded-full border border-[#dcc294] bg-white px-3.5 text-xs font-semibold text-[#786242] hover:bg-[#f8edd7]"
+                    >
+                      Clear all selections
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-[#786242]">
+                      Save with 0 selected to remove your votes for this day
+                    </span>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-full bg-gradient-to-r from-[#e11d2a] to-[#b91c1c] px-6 text-xs font-extrabold uppercase tracking-wider text-[#fde047] shadow-sm ring-2 ring-[#facc15] transition hover:brightness-110 disabled:opacity-50"
+                  >
+                    {isSaving
+                      ? "Saving…"
+                      : existingVoterChoices.length > 0
+                        ? "Update Nominations"
+                        : "Confirm Nominations"}
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </FormModal>
+            )}
+          </form>
+        </section>
+      )}
+    </div>
   );
 }
 
@@ -5113,8 +5459,7 @@ function App() {
   const [isItinerarySaving, setIsItinerarySaving] = useState(false);
   const [isTodoSaving, setIsTodoSaving] = useState(false);
   const [isNominationSaving, setIsNominationSaving] = useState(false);
-  const [isNominationModalOpen, setIsNominationModalOpen] = useState(false);
-  const [isNominationsBoardOpen, setIsNominationsBoardOpen] = useState(false);
+  const [nominationsPageTab, setNominationsPageTab] = useState<NominationsPageTab>("board");
   const [busyRevealKey, setBusyRevealKey] = useState<string | null>(null);
   const [revealError, setRevealError] = useState("");
   const [busyShareId, setBusyShareId] = useState<string | null>(null);
@@ -5439,16 +5784,14 @@ function App() {
   async function handleSaveNominations(
     nominationDate: string,
     voterPersonId: string,
-    nomineePersonIds: string[],
-    maxChoices: number,
+    entries: VoterNominationDraft[],
   ) {
     setIsNominationSaving(true);
     try {
       const savedRows = await saveVoterNominationsForDay(
         nominationDate,
         voterPersonId,
-        nomineePersonIds,
-        maxChoices,
+        entries,
       );
       setNominations((current) => [
         ...savedRows,
@@ -5621,12 +5964,17 @@ function App() {
                   <div className="mt-5">
                     <button
                       type="button"
-                      onClick={() => setIsNominationModalOpen(true)}
+                      onClick={() => {
+                        setNominationsPageTab("cast");
+                        setActiveView("nominations");
+                      }}
                       className="group inline-flex flex-col items-start rounded-2xl border-2 border-[#fde047] bg-gradient-to-r from-[#e11d2a] via-[#dc2626] to-[#991b1b] px-5 py-3 text-left shadow-lg ring-2 ring-black/15 transition duration-200 hover:-translate-y-0.5 hover:brightness-110"
                     >
                       <span className="flex items-center gap-2 text-base font-black tracking-[0.08em] text-[#fde047]">
                         NOMINATE
                         <span className="rounded-full bg-black/25 px-2 py-0.5 text-[10px] font-bold text-white">
+                          {nominations.reduce((sum, n) => sum + (n.points ?? 1), 0)} pt
+                          {nominations.reduce((sum, n) => sum + (n.points ?? 1), 0) === 1 ? "" : "s"} ·{" "}
                           {nominations.length} vote{nominations.length === 1 ? "" : "s"}
                         </span>
                       </span>
@@ -5742,9 +6090,12 @@ function App() {
                 icon={Trophy}
                 label="Eviction Board · Daily & Grand Total"
                 value="Nominations"
-                caption={`${revealedDaysCount} of ${totalNominationDaysCount} days revealed · Tap to view & vote reveal`}
+                caption={`${revealedDaysCount} of ${totalNominationDaysCount} days revealed · Tap to open page`}
                 tone="light"
-                onClick={() => setIsNominationsBoardOpen(true)}
+                onClick={() => {
+                  setNominationsPageTab("board");
+                  setActiveView("nominations");
+                }}
               />
             </div>
 
@@ -5764,6 +6115,24 @@ function App() {
               onToggleAssignmentDone={handleToggleAssignmentDone}
             />
           </div>
+        )}
+
+        {activeView === "nominations" && (
+          <NominationsPage
+            people={people}
+            nominationDays={nominationDays}
+            nominations={nominations}
+            revealVotes={nominationRevealVotes}
+            revealStatus={nominationRevealStatus}
+            isSaving={isNominationSaving}
+            busyRevealKey={busyRevealKey}
+            revealError={revealError}
+            initialTab={nominationsPageTab}
+            onTabChange={setNominationsPageTab}
+            onBackToHouse={() => setActiveView("overview")}
+            onSaveNominations={handleSaveNominations}
+            onToggleRevealVote={handleToggleRevealVote}
+          />
         )}
 
         {activeView === "itinerary" && (
@@ -5930,31 +6299,6 @@ function App() {
         onSetSharePaid={handleSharePaid}
         onToggleAssignmentDone={handleToggleAssignmentDone}
         onUpdateProfile={handleUpdatePersonProfile}
-      />
-
-      <NominationModal
-        isOpen={isNominationModalOpen}
-        people={people}
-        nominationDays={nominationDays}
-        nominations={nominations}
-        isSaving={isNominationSaving}
-        onClose={() => setIsNominationModalOpen(false)}
-        onOpenBoard={() => setIsNominationsBoardOpen(true)}
-        onSaveNominations={handleSaveNominations}
-      />
-
-      <NominationsBoardModal
-        isOpen={isNominationsBoardOpen}
-        people={people}
-        nominationDays={nominationDays}
-        nominations={nominations}
-        revealVotes={nominationRevealVotes}
-        revealStatus={nominationRevealStatus}
-        busyRevealKey={busyRevealKey}
-        error={revealError}
-        onClose={() => setIsNominationsBoardOpen(false)}
-        onToggleRevealVote={handleToggleRevealVote}
-        onOpenNominate={() => setIsNominationModalOpen(true)}
       />
 
       <nav
