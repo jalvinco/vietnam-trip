@@ -16,15 +16,22 @@ import {
   Compass,
   CreditCard,
   ExternalLink,
+  Eye,
+  EyeOff,
+  Flame,
   Images,
+  Lock,
   MapPin,
   Plane,
   Plus,
   ReceiptText,
   Sparkles,
+  Trophy,
+  Unlock,
   UsersRound,
   Wallet,
   Waves,
+  Wifi,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -36,11 +43,14 @@ import {
   deleteItineraryEntry,
   deleteTodo,
   fetchTripData,
+  saveVoterNominationsForDay,
+  setNominationRevealVote,
   setSharePaid,
   setTodoAssignmentDone,
   setTodoDone,
   updateExpense,
   updateItineraryEntry,
+  updatePersonProfile,
   updateTodo,
   type ExpenseDetails,
   type ExpenseDraft,
@@ -48,8 +58,23 @@ import {
   type TodoDetails,
   type TodoDraft,
 } from "./data/tripData";
-import type { CategoryRow, ItineraryRow, PersonRow } from "./types/database";
-import { hasGoogleMapsApiKey, loadGoogleMaps } from "./utils/googleMaps";
+import type {
+  CategoryRow,
+  ItineraryRow,
+  NominationDayRow,
+  NominationRevealStatusRow,
+  NominationRevealVoteRow,
+  NominationRow,
+  PersonRow,
+} from "./types/database";
+import {
+  hasGoogleMapsApiKey,
+  loadGoogleMaps,
+  reverseGeocodeNew,
+  searchPlacesNew,
+  type PickedPlace,
+} from "./utils/googleMaps";
+import { fetchTripWeather, type DayWeather, type TripWeatherForecast } from "./utils/weather";
 import stay1 from "./images/stay1.avif";
 import stay2 from "./images/stay2.avif";
 import stay3 from "./images/stay3.avif";
@@ -116,10 +141,10 @@ type ItineraryDay = {
   events: ItineraryEvent[];
 };
 
-const avatarColors = ["#f59e0b", "#ef4444", "#d97706", "#dc2626", "#fbbf24", "#ea580c", "#b91c1c"];
+const avatarColors = ["#1d4ed8", "#e11d2a", "#f59e0b", "#16a34a", "#2563eb", "#dc2626", "#ca8a04"];
 
 const navItems: { id: View; label: string; icon: LucideIcon }[] = [
-  { id: "overview", label: "Overview", icon: Compass },
+  { id: "overview", label: "The House", icon: Compass },
   { id: "itinerary", label: "Itinerary", icon: CalendarDays },
   { id: "bookings", label: "Bookings", icon: Plane },
   { id: "expenses", label: "Expenses", icon: Wallet },
@@ -134,15 +159,15 @@ const itinerary: ItineraryDay[] = [
     events: [
       {
         time: "7:50 PM",
-        title: "Flight departs Manila",
-        detail: "Outbound flight · airline and flight number to add",
+        title: "Flight 5J 5756 departs Manila (NAIA Terminal 3)",
+        detail: "Outbound flight 5J 5756 · NAIA Terminal 3 → Da Nang International Airport Terminal 2",
         icon: Plane,
         confirmed: true,
       },
       {
-        time: "11:00 PM",
-        title: "Arrive at Hoi An accommodation",
-        detail: "Late check-in · booking details to add",
+        time: "9:30 PM",
+        title: "Arrive at Da Nang Intl Airport (Terminal 2) & head to Hoi An",
+        detail: "Evening check-in at 12 Trần Cao Vân, Hội An",
         icon: MapPin,
         confirmed: true,
       },
@@ -189,23 +214,24 @@ const itinerary: ItineraryDay[] = [
     city: "Hoi An → Da Nang",
     events: [
       {
-        time: "12:00 PM",
+        time: "11:00 AM",
         title: "Check out of Hoi An stay",
-        detail: "Checkout time confirmed",
+        detail: "Checkout at 11:00 AM confirmed",
         icon: CheckCircle2,
         confirmed: true,
       },
       {
         time: "After checkout",
         title: "Travel to Da Nang",
-        detail: "Transfer time and transport to arrange",
+        detail: "Transfer from Hoi An to Da Nang before 2:00 PM check-in",
         icon: ArrowRight,
       },
       {
-        time: "Later",
+        time: "2:00 PM",
         title: "Check in to Da Nang stay",
-        detail: "Accommodation details to add",
+        detail: "Check-in at 2:00 PM confirmed · 27 Vũng Thùng 1, Sơn Trà",
         icon: MapPin,
+        confirmed: true,
       },
     ],
   },
@@ -232,13 +258,20 @@ const itinerary: ItineraryDay[] = [
       {
         time: "Daytime",
         title: "Last day in Da Nang",
-        detail: "Checkout and luggage plan to confirm with your stay.",
+        detail: "Stay is booked until Nov 30 (12:00 PM checkout), so bags can stay until evening.",
         icon: Coffee,
       },
       {
+        time: "6:00 PM",
+        title: "Head to Da Nang International Airport (Terminal 2)",
+        detail: "Leave accommodation for the airport by 6:00 PM",
+        icon: ArrowRight,
+        confirmed: true,
+      },
+      {
         time: "10:30 PM",
-        title: "Return flight to Manila",
-        detail: "Return flight · airport and flight number to add",
+        title: "Return flight 5J 5757 to Manila (NAIA Terminal 3)",
+        detail: "Flight 5J 5757 · Da Nang International Airport Terminal 2 → NAIA Terminal 3 (arrives 2:15 AM)",
         icon: Plane,
         confirmed: true,
       },
@@ -307,6 +340,106 @@ function formatExpenseAmount(amount: number, isPeso: boolean, vndPerPhp: number)
   return `${formatVnd(amount)} (${formatPhp(toPhp(amount, false, vndPerPhp))})`;
 }
 
+function useAnimatedNumber(target: number, durationMs = 520): number {
+  const [display, setDisplay] = useState(0);
+  const currentRef = useRef(0);
+
+  useEffect(() => {
+    const safeTarget = Number.isFinite(target) ? target : 0;
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      currentRef.current = safeTarget;
+      setDisplay(safeTarget);
+      return;
+    }
+
+    const startValue = currentRef.current;
+    const diff = safeTarget - startValue;
+    if (Math.abs(diff) < 0.005) {
+      currentRef.current = safeTarget;
+      setDisplay(safeTarget);
+      return;
+    }
+
+    let rafId = 0;
+    const startTime = performance.now();
+
+    function step(now: number) {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextVal = startValue + diff * eased;
+      currentRef.current = nextVal;
+      setDisplay(nextVal);
+      if (progress < 1) {
+        rafId = window.requestAnimationFrame(step);
+      } else {
+        currentRef.current = safeTarget;
+        setDisplay(safeTarget);
+      }
+    }
+
+    rafId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [target, durationMs]);
+
+  return display;
+}
+
+function AnimatedVnd({ amount }: { amount: number }) {
+  const animated = useAnimatedNumber(amount);
+  return <span className="tabular-nums">{formatVnd(animated)}</span>;
+}
+
+function AnimatedPhp({ amount }: { amount: number }) {
+  const animated = useAnimatedNumber(amount);
+  return <span className="tabular-nums">{formatPhp(animated)}</span>;
+}
+
+function AnimatedExpenseAmount({
+  amount,
+  isPeso,
+  vndPerPhp,
+}: {
+  amount: number;
+  isPeso: boolean;
+  vndPerPhp: number;
+}) {
+  const animatedAmount = useAnimatedNumber(amount);
+  const animatedPhp = useAnimatedNumber(toPhp(amount, isPeso, vndPerPhp));
+  if (isPeso) {
+    return <span className="tabular-nums">{formatPhp(animatedAmount)}</span>;
+  }
+  return (
+    <span className="tabular-nums">
+      {formatVnd(animatedAmount)} ({formatPhp(animatedPhp)})
+    </span>
+  );
+}
+
+function AnimatedCurrencyTotal({
+  amountVnd,
+  amountPhp,
+  allPeso,
+}: {
+  amountVnd: number;
+  amountPhp: number;
+  allPeso: boolean;
+}) {
+  const animatedVnd = useAnimatedNumber(amountVnd);
+  const animatedPhp = useAnimatedNumber(amountPhp);
+  if (allPeso) {
+    return <span className="tabular-nums">{formatPhp(animatedPhp)}</span>;
+  }
+  return (
+    <span className="tabular-nums">
+      {formatVnd(animatedVnd)} ({formatPhp(animatedPhp)})
+    </span>
+  );
+}
+
 function formatTripDate(date: string) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -343,6 +476,7 @@ function PersonAvatar({
   borderClass?: string;
 }) {
   const avatarUrl = getPersonAvatarUrl(name);
+  const [loaded, setLoaded] = useState(false);
   return (
     <span
       className={`relative inline-grid shrink-0 place-items-center overflow-hidden rounded-full font-bold text-[#451a03] ${sizeClass} ${borderClass}`}
@@ -350,12 +484,18 @@ function PersonAvatar({
       title={name}
     >
       {avatarUrl ? (
-        <img
-          src={avatarUrl}
-          alt={name}
-          loading="lazy"
-          className="size-full object-cover"
-        />
+        <>
+          {!loaded && <span className="animate-shimmer absolute inset-0" />}
+          <img
+            src={avatarUrl}
+            alt={name}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            className={`size-full object-cover transition-all duration-300 ${
+              loaded ? "scale-100 opacity-100" : "scale-95 opacity-0"
+            }`}
+          />
+        </>
       ) : (
         getPersonInitial(name)
       )}
@@ -366,34 +506,42 @@ function PersonAvatar({
 function AvatarStack({
   people,
   size = "normal",
+  onSelectPerson,
 }: {
   people: Participant[];
   size?: "normal" | "small";
+  onSelectPerson?: (person: Participant) => void;
 }) {
   return (
     <div className="flex items-center" aria-label={`${people.length} trip members`}>
       {people.slice(0, 7).map((person, index) => {
         const avatarUrl = getPersonAvatarUrl(person.name);
         return (
-          <span
+          <button
+            type="button"
             key={person.id}
-            className={`relative grid place-items-center overflow-hidden rounded-full border-2 border-[#fffaf3] font-semibold text-[#451a03] shadow-sm ${
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelectPerson?.(person);
+            }}
+            className={`relative grid place-items-center overflow-hidden rounded-full border-2 border-[#fffaf3] font-semibold text-[#451a03] shadow-sm transition duration-200 hover:z-20 hover:scale-110 ${
               size === "small" ? "size-7 text-[9px]" : "size-9 text-[10px]"
             } ${index ? "-ml-2" : ""}`}
             style={{ backgroundColor: person.color, zIndex: 10 - index }}
-            title={person.name}
+            title={`View ${person.name}'s profile`}
+            aria-label={`View ${person.name}'s profile`}
           >
             {avatarUrl ? (
               <img
                 src={avatarUrl}
                 alt={person.name}
                 loading="lazy"
-                className="size-full object-cover"
+                className="size-full object-cover transition-transform duration-300"
               />
             ) : (
               getPersonInitial(person.name)
             )}
-          </span>
+          </button>
         );
       })}
       {people.length > 7 && (
@@ -420,13 +568,13 @@ function SectionHeading({
 }) {
   return (
     <div className="mb-6">
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#b91c1c]">
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#e11d2a]">
         {eyebrow}
       </p>
-      <h1 className="text-[clamp(1.7rem,4vw,2.4rem)] font-semibold tracking-[-0.045em] text-[#2a1810]">
+      <h1 className="text-[clamp(1.7rem,4vw,2.4rem)] font-bold tracking-[-0.045em] text-[#153eb5]">
         {title}
       </h1>
-      {detail && <p className="mt-2 max-w-2xl text-sm leading-6 text-[#785c4e]">{detail}</p>}
+      {detail && <p className="mt-2 max-w-2xl text-sm leading-6 text-[#5c4b32]">{detail}</p>}
     </div>
   );
 }
@@ -437,40 +585,122 @@ function SummaryCard({
   value,
   caption,
   tone = "dark",
+  onClick,
 }: {
   icon: LucideIcon;
   label: string;
-  value: string;
-  caption: string;
+  value: ReactNode;
+  caption: ReactNode;
   tone?: "dark" | "light";
+  onClick?: () => void;
 }) {
   const isDark = tone === "dark";
-  return (
-    <div
-      className={`rounded-[22px] border p-5 ${
-        isDark
-          ? "border-[#991b1b] bg-gradient-to-br from-[#991b1b] via-[#b91c1c] to-[#7f1d1d] text-white shadow-sm"
-          : "border-[#eddcc4] bg-white"
-      }`}
-    >
+  const cardClasses = `animate-fade-up w-full rounded-[22px] border-2 p-5 text-left transition duration-200 ${
+    isDark
+      ? "border-[#facc15]/60 bg-gradient-to-br from-[#153eb5] via-[#1d4ed8] to-[#e11d2a] text-white shadow-md"
+      : "border-[#dcc294] bg-[#fffcf5] shadow-xs"
+  } ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:border-[#1d4ed8] hover:shadow-md" : ""}`;
+
+  const content = (
+    <>
       <div className="mb-5 flex items-center justify-between">
-        <span className={`text-xs font-medium ${isDark ? "text-[#fde68a]/85" : "text-[#785c4e]"}`}>
+        <span className={`text-xs font-semibold ${isDark ? "text-[#fde047]" : "text-[#5c4b32]"}`}>
           {label}
         </span>
         <span
           className={`grid size-9 place-items-center rounded-full ${
-            isDark ? "bg-[#fbbf24]/20 text-[#fde68a]" : "bg-[#fef3c7] text-[#b91c1c]"
+            isDark
+              ? "bg-[#facc15]/25 text-[#fde047] ring-1 ring-[#fde047]/40"
+              : "bg-[#dbeafe] text-[#1d4ed8] ring-1 ring-[#1d4ed8]/20"
           }`}
         >
           <Icon size={17} strokeWidth={1.8} />
         </span>
       </div>
-      <p className={`text-[clamp(1.35rem,3vw,1.8rem)] font-semibold tracking-[-0.04em] ${isDark ? "text-[#fffbeb]" : "text-[#2a1810]"}`}>
+      <p
+        className={`text-[clamp(1.35rem,3vw,1.8rem)] font-bold tracking-[-0.04em] ${
+          isDark ? "text-[#fffbeb]" : "text-[#153eb5]"
+        }`}
+      >
         {value}
       </p>
-      <p className={`mt-1.5 text-xs ${isDark ? "text-[#fde68a]/75" : "text-[#8c6f60]"}`}>{caption}</p>
-    </div>
+      <p className={`mt-1.5 text-xs ${isDark ? "text-[#fef08a]/85" : "text-[#786242]"}`}>
+        {caption}
+      </p>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={cardClasses}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={cardClasses}>{content}</div>;
+}
+
+type ModalStackEntry = {
+  id: number;
+  close: () => void;
+};
+
+const activeModalStack: ModalStackEntry[] = [];
+let pushedHistoryDepth = 0;
+let ignoreNextPopStates = 0;
+let historySyncTimer: number | null = null;
+let globalListenersAttached = false;
+let nextModalId = 1;
+
+function ensureGlobalModalListeners() {
+  if (globalListenersAttached || typeof window === "undefined") return;
+  globalListenersAttached = true;
+
+  window.addEventListener("popstate", () => {
+    if (ignoreNextPopStates > 0) {
+      ignoreNextPopStates -= 1;
+      return;
+    }
+    if (activeModalStack.length > 0) {
+      if (pushedHistoryDepth > 0) {
+        pushedHistoryDepth -= 1;
+      }
+      const top = activeModalStack[activeModalStack.length - 1];
+      top.close();
+    }
+  });
+
+  window.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Escape" && activeModalStack.length > 0) {
+      const top = activeModalStack[activeModalStack.length - 1];
+      top.close();
+    }
+  });
+}
+
+function scheduleModalHistorySync() {
+  if (typeof window === "undefined") return;
+  if (historySyncTimer !== null) {
+    window.clearTimeout(historySyncTimer);
+  }
+  historySyncTimer = window.setTimeout(() => {
+    historySyncTimer = null;
+    const targetDepth = activeModalStack.length;
+    while (pushedHistoryDepth < targetDepth) {
+      pushedHistoryDepth += 1;
+      window.history.pushState(
+        { ...(window.history.state ?? {}), __agyModalDepth: pushedHistoryDepth },
+        "",
+      );
+    }
+    while (pushedHistoryDepth > targetDepth) {
+      pushedHistoryDepth -= 1;
+      ignoreNextPopStates += 1;
+      window.history.back();
+    }
+    document.body.style.overflow = targetDepth > 0 ? "hidden" : "";
+  }, 35);
 }
 
 function useModalBackHandler(isOpen: boolean, onClose: () => void) {
@@ -479,35 +709,22 @@ function useModalBackHandler(isOpen: boolean, onClose: () => void) {
 
   useEffect(() => {
     if (!isOpen) return;
+    ensureGlobalModalListeners();
 
-    let closedByPopState = false;
-    const stateKey = `modal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    window.history.pushState({ ...(window.history.state ?? {}), __agyModal: stateKey }, "");
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function handlePopState() {
-      closedByPopState = true;
-      onCloseRef.current();
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onCloseRef.current();
-      }
-    }
-
-    window.addEventListener("popstate", handlePopState);
-    window.addEventListener("keydown", handleKeyDown);
+    const entryId = nextModalId++;
+    const entry: ModalStackEntry = {
+      id: entryId,
+      close: () => onCloseRef.current(),
+    };
+    activeModalStack.push(entry);
+    scheduleModalHistorySync();
 
     return () => {
-      window.removeEventListener("popstate", handlePopState);
-      window.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      if (!closedByPopState && window.history.state?.__agyModal === stateKey) {
-        window.history.back();
+      const idx = activeModalStack.findIndex((item) => item.id === entryId);
+      if (idx !== -1) {
+        activeModalStack.splice(idx, 1);
       }
+      scheduleModalHistorySync();
     };
   }, [isOpen]);
 }
@@ -539,15 +756,15 @@ function FormModal({
           onClose();
         }
       }}
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      className="animate-backdrop-in fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
     >
-      <div className="flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[26px] border border-[#dfe8df] bg-[#fafaf9] shadow-2xl sm:max-h-[88dvh] sm:rounded-[26px]">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e8e9e3] bg-white px-5 py-4 sm:px-6">
+      <div className="animate-modal-in flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[26px] border-2 border-[#dcc294] bg-[#fffcf5] shadow-2xl sm:max-h-[88dvh] sm:rounded-[26px]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#dcc294] bg-[#f8edd7] px-5 py-4 sm:px-6">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
               {eyebrow}
             </p>
-            <h2 className="mt-0.5 text-base font-semibold tracking-[-0.02em] text-[#17231f] sm:text-lg">
+            <h2 className="mt-0.5 text-base font-bold tracking-[-0.02em] text-[#153eb5] sm:text-lg">
               {title}
             </h2>
           </div>
@@ -555,7 +772,7 @@ function FormModal({
             type="button"
             onClick={onClose}
             aria-label="Close modal"
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[#f3f4ef] px-3.5 text-xs font-semibold text-[#536058] transition hover:bg-[#e7eae4]"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[#dcc294] bg-white px-3.5 text-xs font-semibold text-[#153eb5] transition hover:bg-[#fef08a]"
           >
             <X size={15} />
             Close
@@ -834,13 +1051,13 @@ function TodosPanel({
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#a16207]">
-            Before & during the trip
+            Pakigawa kunde papasok ka sa confession room.
           </p>
           <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-[#422006]">
-            Todos
+            Tasks ni koya
           </h2>
           <p className="mt-1 text-xs text-[#854d0e]">
-            Shared tasks and reminders · assigning people is optional, and both todos and individual assignments can be marked done.
+            Shared tasks and reminders · assigning people is optional, and both todos and individual assignments can be marked done. Click on a name to mark done.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1064,6 +1281,1334 @@ function TodosPanel({
 
 const DEFAULT_VIETNAM_CENTER = { lat: 15.8801, lng: 108.338 }; // Hoi An / Da Nang area
 
+const DEFAULT_NOMINATION_DATES = [
+  "2026-11-24",
+  "2026-11-25",
+  "2026-11-26",
+  "2026-11-27",
+  "2026-11-28",
+  "2026-11-29",
+];
+
+function NominationModal({
+  isOpen,
+  people,
+  nominationDays,
+  nominations,
+  isSaving,
+  onClose,
+  onOpenBoard,
+  onSaveNominations,
+}: {
+  isOpen: boolean;
+  people: Participant[];
+  nominationDays: NominationDayRow[];
+  nominations: NominationRow[];
+  isSaving: boolean;
+  onClose: () => void;
+  onOpenBoard: () => void;
+  onSaveNominations: (
+    nominationDate: string,
+    voterPersonId: string,
+    nomineePersonIds: string[],
+    maxChoices: number,
+  ) => Promise<void>;
+}) {
+  const availableDays =
+    nominationDays.length > 0
+      ? nominationDays
+      : DEFAULT_NOMINATION_DATES.map((d) => ({
+          nomination_date: d,
+          max_nominations_per_person: 2,
+        }));
+
+  const [selectedDate, setSelectedDate] = useState(
+    availableDays[0]?.nomination_date ?? "2026-11-24",
+  );
+  const [voterId, setVoterId] = useState("");
+  const [selectedNomineeIds, setSelectedNomineeIds] = useState<string[]>([]);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const activeVoterId =
+    people.some((p) => p.id === voterId) ? voterId : (people[0]?.id ?? "");
+
+  const currentDayConfig = availableDays.find((d) => d.nomination_date === selectedDate);
+  const maxChoices = currentDayConfig?.max_nominations_per_person ?? 2;
+
+  useEffect(() => {
+    if (!activeVoterId || !selectedDate) return;
+    const existingForVoterAndDay = nominations
+      .filter(
+        (n) => n.nomination_date === selectedDate && n.voter_person_id === activeVoterId,
+      )
+      .map((n) => n.nominee_person_id);
+    setSelectedNomineeIds(existingForVoterAndDay);
+    setError("");
+  }, [activeVoterId, selectedDate, nominations, isOpen]);
+
+  function toggleNominee(personId: string) {
+    if (personId === activeVoterId) return;
+    setError("");
+    setStatusMessage("");
+    setSelectedNomineeIds((current) => {
+      if (current.includes(personId)) {
+        return current.filter((id) => id !== personId);
+      }
+      if (current.length >= maxChoices) {
+        setError(`You can only nominate up to ${maxChoices} housemates per day.`);
+        return current;
+      }
+      return [...current, personId];
+    });
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatusMessage("");
+    if (!activeVoterId) {
+      setError("Select who is voting first.");
+      return;
+    }
+    try {
+      await onSaveNominations(selectedDate, activeVoterId, selectedNomineeIds, maxChoices);
+      const voterName = people.find((p) => p.id === activeVoterId)?.name ?? "Housemate";
+      setStatusMessage(
+        selectedNomineeIds.length === 0
+          ? `Cleared ${voterName}'s nominations for ${formatTripDate(selectedDate)}.`
+          : `Saved ${voterName}'s nomination${selectedNomineeIds.length === 1 ? "" : "s"} for ${formatTripDate(selectedDate)}!`,
+      );
+    } catch (saveErr) {
+      setError(
+        saveErr instanceof Error ? saveErr.message : "Could not save nominations.",
+      );
+    }
+  }
+
+  const dayNominations = nominations.filter((n) => n.nomination_date === selectedDate);
+
+  const existingVoterChoices = dayNominations.filter(
+    (n) => n.voter_person_id === activeVoterId,
+  );
+
+  return (
+    <FormModal
+      isOpen={isOpen}
+      eyebrow="Confession Room · Secret Ballot"
+      title="Nominate a Housemate for Eviction"
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#153eb5]">
+            1. Choose Nomination Day
+          </span>
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            {availableDays.map((day, idx) => {
+              const isSelected = day.nomination_date === selectedDate;
+              const countOnDay = nominations.filter(
+                (n) => n.nomination_date === day.nomination_date,
+              ).length;
+              return (
+                <button
+                  key={day.nomination_date}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDate(day.nomination_date);
+                    setStatusMessage("");
+                    setError("");
+                  }}
+                  aria-pressed={isSelected}
+                  className={`min-w-[82px] rounded-2xl border px-3 py-2 text-left transition ${
+                    isSelected
+                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
+                      : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                  }`}
+                >
+                  <span className="block text-[9px] font-bold tracking-[0.12em] opacity-80">
+                    DAY {idx + 1}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-bold">
+                    {formatTripDate(day.nomination_date)}
+                  </span>
+                  <span
+                    className={`mt-0.5 block text-[10px] ${
+                      isSelected ? "text-white/90" : "text-[#e11d2a]"
+                    }`}
+                  >
+                    {countOnDay} vote{countOnDay === 1 ? "" : "s"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#153eb5]">
+              2. Who is voting? (Confession Room)
+            </span>
+            <span className="text-[11px] font-medium text-[#786242]">
+              Tap your profile to cast or edit your votes
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {people.map((person) => {
+              const isVoter = person.id === activeVoterId;
+              const castCount = dayNominations.filter(
+                (n) => n.voter_person_id === person.id,
+              ).length;
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  aria-pressed={isVoter}
+                  onClick={() => {
+                    setVoterId(person.id);
+                    setStatusMessage("");
+                    setError("");
+                  }}
+                  className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3 py-1.5 text-xs font-bold transition ${
+                    isVoter
+                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
+                      : "border-[#dcc294] bg-white text-[#5c4b32] hover:bg-[#f8edd7]"
+                  }`}
+                >
+                  <PersonAvatar name={person.name} color={person.color} sizeClass="size-5 text-[9px]" />
+                  <span>{person.name}</span>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                      isVoter
+                        ? "bg-black/25 text-[#fde047]"
+                        : castCount > 0
+                          ? "bg-[#fef08a] text-[#713f12]"
+                          : "bg-[#f3e5d0] text-[#786242]"
+                    }`}
+                  >
+                    {castCount}/{maxChoices}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border-2 border-[#e11d2a]/35 bg-gradient-to-br from-[#fff5f5] via-white to-[#fefce8] p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-[#e11d2a]">
+                3. Nominate up to {maxChoices} Housemates ({formatTripDate(selectedDate)})
+              </p>
+              <p className="mt-0.5 text-[11px] text-[#5c4b32]">
+                {existingVoterChoices.length > 0
+                  ? "Editing your existing nominations for this day. Select or unselect housemates below."
+                  : `Choose up to ${maxChoices} housemates to nominate for eviction today.`}
+              </p>
+            </div>
+            <span className="rounded-full bg-[#e11d2a] px-3 py-1 text-xs font-bold text-[#fde047]">
+              {selectedNomineeIds.length} / {maxChoices} selected
+            </span>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            {people
+              .filter((person) => person.id !== activeVoterId)
+              .map((person) => {
+                const isNominated = selectedNomineeIds.includes(person.id);
+                return (
+                  <button
+                    key={person.id}
+                    type="button"
+                    aria-pressed={isNominated}
+                    onClick={() => toggleNominee(person.id)}
+                    className={`flex min-h-12 items-center justify-between gap-3 rounded-xl border-2 px-3.5 py-2 text-left transition ${
+                      isNominated
+                        ? "border-[#e11d2a] bg-[#fee2e2] text-[#991b1b] shadow-xs"
+                        : "border-[#dcc294] bg-white text-[#172554] hover:border-[#1d4ed8]"
+                    }`}
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <PersonAvatar
+                        name={person.name}
+                        color={person.color}
+                        sizeClass="size-8 text-xs"
+                        borderClass={
+                          isNominated ? "border-2 border-[#e11d2a]" : "border border-[#dcc294]"
+                        }
+                      />
+                      <span className="truncate text-xs font-bold">{person.name}</span>
+                    </div>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide ${
+                        isNominated
+                          ? "bg-[#e11d2a] text-[#fde047]"
+                          : "bg-[#f8edd7] text-[#786242]"
+                      }`}
+                    >
+                      {isNominated ? "Nominated" : "Nominate"}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+
+          {statusMessage && (
+            <p
+              role="status"
+              className="mt-3 rounded-xl border border-[#eab308] bg-[#fef08a] px-3.5 py-2 text-xs font-semibold text-[#713f12]"
+            >
+              {statusMessage}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700">
+              {error}
+            </p>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#dcc294] pt-3">
+            {selectedNomineeIds.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setSelectedNomineeIds([])}
+                className="min-h-9 rounded-full border border-[#dcc294] bg-white px-3.5 text-xs font-semibold text-[#786242] hover:bg-[#f8edd7]"
+              >
+                Clear selection
+              </button>
+            ) : (
+              <span className="text-[11px] text-[#786242]">
+                Save with 0 selected to remove your votes for this day
+              </span>
+            )}
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="inline-flex min-h-10 items-center gap-2 rounded-full bg-gradient-to-r from-[#e11d2a] to-[#b91c1c] px-5 text-xs font-extrabold uppercase tracking-wider text-[#fde047] shadow-sm ring-2 ring-[#facc15] transition hover:brightness-110 disabled:opacity-50"
+            >
+              {isSaving
+                ? "Saving…"
+                : existingVoterChoices.length > 0
+                  ? "Update Nominations"
+                  : "Confirm Nominations"}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-[#dcc294] bg-[#f8edd7]/80 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-[#153eb5]">
+              Want to see the Nominations Board & Grand Total?
+            </p>
+            <p className="text-[11px] text-[#786242]">
+              Each day stays hidden until all housemates vote to reveal it on the Nominations Board.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenBoard();
+            }}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[#1d4ed8] bg-[#1d4ed8] px-3.5 text-xs font-bold text-[#fde047] transition hover:bg-[#153eb5]"
+          >
+            <Eye size={14} />
+            Open Nominations Board
+          </button>
+        </div>
+      </form>
+    </FormModal>
+  );
+}
+
+function NominationsBoardModal({
+  isOpen,
+  people,
+  nominationDays,
+  nominations,
+  revealVotes,
+  revealStatus,
+  busyRevealKey,
+  error,
+  onClose,
+  onToggleRevealVote,
+  onOpenNominate,
+}: {
+  isOpen: boolean;
+  people: Participant[];
+  nominationDays: NominationDayRow[];
+  nominations: NominationRow[];
+  revealVotes: NominationRevealVoteRow[];
+  revealStatus: NominationRevealStatusRow[];
+  busyRevealKey: string | null;
+  error: string;
+  onClose: () => void;
+  onToggleRevealVote: (
+    nominationDate: string,
+    personId: string,
+    shouldVote: boolean,
+  ) => Promise<void>;
+  onOpenNominate: () => void;
+}) {
+  const availableDays =
+    nominationDays.length > 0
+      ? nominationDays
+      : DEFAULT_NOMINATION_DATES.map((d) => ({
+          nomination_date: d,
+          max_nominations_per_person: 2,
+        }));
+
+  const [selectedDate, setSelectedDate] = useState(
+    availableDays[0]?.nomination_date ?? "2026-11-24",
+  );
+
+  function getDayRevealInfo(nominationDate: string) {
+    const statusRow = revealStatus.find((s) => s.nomination_date === nominationDate);
+    const votesForDay = revealVotes.filter((v) => v.nomination_date === nominationDate);
+    const totalPeople = statusRow ? statusRow.total_people : people.length;
+    const revealVoteCount = statusRow ? statusRow.reveal_votes : votesForDay.length;
+    const isRevealed = statusRow
+      ? Boolean(statusRow.is_revealed)
+      : totalPeople > 0 && votesForDay.length >= totalPeople;
+    return {
+      totalPeople,
+      revealVoteCount,
+      isRevealed,
+      voterIds: new Set(votesForDay.map((v) => v.person_id)),
+    };
+  }
+
+  const selectedDayInfo = getDayRevealInfo(selectedDate);
+  const selectedDayNominations = nominations.filter((n) => n.nomination_date === selectedDate);
+
+  const selectedDayTally = people
+    .map((person) => {
+      const votesReceived = selectedDayNominations.filter(
+        (n) => n.nominee_person_id === person.id,
+      );
+      const voters = votesReceived
+        .map((v) => people.find((p) => p.id === v.voter_person_id)?.name ?? "Someone")
+        .filter(Boolean);
+      return {
+        person,
+        count: votesReceived.length,
+        voters,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.person.name.localeCompare(b.person.name));
+
+  const revealedDateSet = new Set(
+    availableDays
+      .filter((day) => getDayRevealInfo(day.nomination_date).isRevealed)
+      .map((day) => day.nomination_date),
+  );
+
+  const revealedNominations = nominations.filter((n) =>
+    revealedDateSet.has(n.nomination_date),
+  );
+
+  const grandTotalTally = people
+    .map((person) => {
+      const votesReceived = revealedNominations.filter(
+        (n) => n.nominee_person_id === person.id,
+      );
+      const byDay = availableDays.map((day, index) => {
+        const isDayRevealed = revealedDateSet.has(day.nomination_date);
+        const dayPoints = isDayRevealed
+          ? votesReceived.filter((v) => v.nomination_date === day.nomination_date).length
+          : null;
+        return {
+          nominationDate: day.nomination_date,
+          dayNumber: index + 1,
+          isDayRevealed,
+          dayPoints,
+        };
+      });
+      return {
+        person,
+        totalPoints: votesReceived.length,
+        byDay,
+      };
+    })
+    .sort((a, b) => b.totalPoints - a.totalPoints || a.person.name.localeCompare(b.person.name));
+
+  return (
+    <FormModal
+      isOpen={isOpen}
+      eyebrow="Pinoy Big Bruh · Eviction Tally & Reveal"
+      title="Nominations Board"
+      onClose={onClose}
+    >
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#dcc294] bg-[#f8edd7] px-4 py-3">
+          <div>
+            <p className="text-xs font-bold text-[#153eb5]">
+              {revealedDateSet.size} of {availableDays.length} days revealed
+            </p>
+            <p className="text-[11px] text-[#5c4b32]">
+              All {selectedDayInfo.totalPeople || people.length} housemates must vote to reveal a day before its nominations are shown.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenNominate();
+            }}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[#e11d2a] px-3.5 text-xs font-extrabold uppercase tracking-wide text-[#fde047] shadow-xs ring-1 ring-[#facc15] transition hover:brightness-110"
+          >
+            <Flame size={13} />
+            Cast / Edit Votes
+          </button>
+        </div>
+
+        {/* 1. Day Tabs */}
+        <div>
+          <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-[#153eb5]">
+            Select Day to Vote Reveal or View Tally
+          </span>
+          <div className="-mx-1 grid grid-cols-2 gap-2 px-1 sm:grid-cols-3">
+            {availableDays.map((day, idx) => {
+              const isSelected = day.nomination_date === selectedDate;
+              const info = getDayRevealInfo(day.nomination_date);
+              const dayVotesCount = nominations.filter(
+                (n) => n.nomination_date === day.nomination_date,
+              ).length;
+              return (
+                <button
+                  key={day.nomination_date}
+                  type="button"
+                  onClick={() => setSelectedDate(day.nomination_date)}
+                  aria-pressed={isSelected}
+                  className={`rounded-2xl border-2 px-3 py-2.5 text-left transition ${
+                    isSelected
+                      ? "border-[#facc15] bg-[#1d4ed8] text-[#fde047] shadow-sm"
+                      : info.isRevealed
+                        ? "border-emerald-300 bg-emerald-50/70 text-[#172554] hover:bg-emerald-50"
+                        : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] opacity-85">
+                      DAY {idx + 1}
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                        info.isRevealed
+                          ? isSelected
+                            ? "bg-emerald-400/25 text-emerald-200"
+                            : "bg-emerald-600 text-white"
+                          : isSelected
+                            ? "bg-black/25 text-[#fde047]"
+                            : "bg-[#e5cfa8] text-[#5c4b32]"
+                      }`}
+                    >
+                      {info.isRevealed ? <Unlock size={10} /> : <Lock size={10} />}
+                      {info.revealVoteCount}/{info.totalPeople}
+                    </span>
+                  </div>
+                  <span className="mt-1 block text-xs font-bold">
+                    {formatTripDate(day.nomination_date)}
+                  </span>
+                  <span
+                    className={`mt-0.5 block text-[10px] font-semibold ${
+                      isSelected
+                        ? "text-white/90"
+                        : info.isRevealed
+                          ? "text-emerald-700"
+                          : "text-[#786242]"
+                    }`}
+                  >
+                    {info.isRevealed
+                      ? `Revealed · ${dayVotesCount} vote${dayVotesCount === 1 ? "" : "s"}`
+                      : "Hidden until all vote"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 2. Reveal Voting Box for Selected Day */}
+        <div className="rounded-2xl border-2 border-[#1d4ed8]/30 bg-gradient-to-br from-[#eff6ff] via-white to-[#fefce8] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#1d4ed8]">
+                Reveal Consent · {formatTripDate(selectedDate)}
+              </p>
+              <h3 className="mt-0.5 text-sm font-bold text-[#172554]">
+                Vote to Reveal {formatTripDate(selectedDate)} Nominations
+              </h3>
+            </div>
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold ${
+                selectedDayInfo.isRevealed
+                  ? "bg-emerald-600 text-white"
+                  : "bg-[#1d4ed8] text-[#fde047]"
+              }`}
+            >
+              {selectedDayInfo.isRevealed ? <Eye size={13} /> : <EyeOff size={13} />}
+              {selectedDayInfo.revealVoteCount} / {selectedDayInfo.totalPeople} voted
+            </span>
+          </div>
+
+          <p className="mt-1.5 text-xs text-[#5c4b32]">
+            Tap your name to vote to reveal this day’s nominations. Tap again anytime to withdraw your reveal vote and hide the results.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {people.map((person) => {
+              const hasVoted = selectedDayInfo.voterIds.has(person.id);
+              const busyKey = `${selectedDate}:${person.id}`;
+              const isBusy = busyRevealKey === busyKey;
+              return (
+                <button
+                  key={person.id}
+                  type="button"
+                  disabled={isBusy}
+                  aria-pressed={hasVoted}
+                  onClick={() =>
+                    void onToggleRevealVote(selectedDate, person.id, !hasVoted)
+                  }
+                  className={`flex min-h-10 items-center gap-2 rounded-full border-2 px-3 py-1.5 text-xs font-bold transition disabled:opacity-55 ${
+                    hasVoted
+                      ? "border-emerald-600 bg-emerald-600 text-white shadow-xs hover:bg-emerald-700"
+                      : "border-[#dcc294] bg-white text-[#172554] hover:border-[#1d4ed8] hover:bg-[#f8edd7]"
+                  }`}
+                >
+                  <PersonAvatar
+                    name={person.name}
+                    color={person.color}
+                    sizeClass="size-5 text-[9px]"
+                  />
+                  <span>{person.name}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                      hasVoted
+                        ? "bg-black/20 text-[#fde047]"
+                        : "bg-[#f8edd7] text-[#786242]"
+                    }`}
+                  >
+                    {isBusy ? "…" : hasVoted ? "Voted · Withdraw" : "Vote Reveal"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {error && (
+            <p
+              role="alert"
+              className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700"
+            >
+              {error}
+            </p>
+          )}
+        </div>
+
+        {/* 3. Selected Day Nominations Tally (Shown ONLY when is_revealed is true) */}
+        <div className="rounded-2xl border-2 border-[#dcc294] bg-[#fffcf5] p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
+                Daily Eviction Board · {formatTripDate(selectedDate)}
+              </p>
+              <h4 className="text-sm font-bold text-[#153eb5]">
+                {selectedDayInfo.isRevealed
+                  ? `Nominations Revealed (${selectedDayNominations.length} vote${selectedDayNominations.length === 1 ? "" : "s"})`
+                  : "Nominations Hidden"}
+              </h4>
+            </div>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider ${
+                selectedDayInfo.isRevealed
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-[#fee2e2] text-[#991b1b]"
+              }`}
+            >
+              {selectedDayInfo.isRevealed ? (
+                <>
+                  <Unlock size={11} />
+                  Revealed
+                </>
+              ) : (
+                <>
+                  <Lock size={11} />
+                  Locked ({selectedDayInfo.revealVoteCount}/{selectedDayInfo.totalPeople})
+                </>
+              )}
+            </span>
+          </div>
+
+          {selectedDayInfo.isRevealed ? (
+            <div className="space-y-2">
+              {selectedDayTally.map(({ person, count, voters }) => (
+                <div
+                  key={person.id}
+                  className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-xs ${
+                    count > 0
+                      ? "border-[#e11d2a]/40 bg-[#fff5f5]"
+                      : "border-[#e8d7b5] bg-white"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <PersonAvatar
+                      name={person.name}
+                      color={person.color}
+                      sizeClass="size-7 text-[10px]"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-[#172554]">{person.name}</p>
+                      <p className="truncate text-[10px] text-[#786242]">
+                        {voters.length > 0
+                          ? `Nominated by: ${voters.join(", ")}`
+                          : "No nominations received on this day"}
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${
+                      count > 0
+                        ? "bg-[#e11d2a] text-[#fde047]"
+                        : "bg-[#f8edd7] text-[#786242]"
+                    }`}
+                  >
+                    {count} pt{count === 1 ? "" : "s"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#dcc294] bg-[#f8edd7]/50 px-4 py-7 text-center">
+              <span className="grid size-11 place-items-center rounded-full bg-[#1d4ed8]/10 text-[#1d4ed8]">
+                <Lock size={20} />
+              </span>
+              <p className="mt-2.5 text-xs font-bold text-[#172554]">
+                {formatTripDate(selectedDate)} nominations are still sealed
+              </p>
+              <p className="mt-1 max-w-md text-[11px] text-[#786242]">
+                {selectedDayInfo.revealVoteCount} of {selectedDayInfo.totalPeople} housemates have voted to reveal this day. Once all {selectedDayInfo.totalPeople} housemates vote above, the nominees and voters for {formatTripDate(selectedDate)} will unlock!
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* 4. Grand Total Board across all days */}
+        <div className="rounded-2xl border-2 border-[#facc15] bg-gradient-to-br from-[#153eb5] via-[#1d4ed8] to-[#991b1b] p-4 text-white shadow-md">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#fde047]">
+                <Trophy size={12} />
+                All Days · Eviction Leaderboard
+              </p>
+              <h4 className="mt-0.5 text-base font-extrabold text-white">
+                Grand Total Nominations ({revealedNominations.length} revealed vote
+                {revealedNominations.length === 1 ? "" : "s"})
+              </h4>
+            </div>
+            <span className="rounded-full bg-black/25 px-3 py-1 text-[11px] font-bold text-[#fde047]">
+              {revealedDateSet.size}/{availableDays.length} days unlocked
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {grandTotalTally.map(({ person, totalPoints, byDay }, index) => (
+              <div
+                key={person.id}
+                className="rounded-xl border border-white/15 bg-white/95 px-3 py-2.5 text-xs text-[#172554]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#f8edd7] text-[10px] font-extrabold text-[#153eb5]">
+                      #{index + 1}
+                    </span>
+                    <PersonAvatar
+                      name={person.name}
+                      color={person.color}
+                      sizeClass="size-7 text-[10px]"
+                    />
+                    <span className="truncate font-bold">{person.name}</span>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-0.5 text-xs font-extrabold ${
+                      totalPoints > 0
+                        ? "bg-[#e11d2a] text-[#fde047]"
+                        : "bg-[#f8edd7] text-[#786242]"
+                    }`}
+                  >
+                    {totalPoints} total pt{totalPoints === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-6 gap-1">
+                  {byDay.map((d) => (
+                    <div
+                      key={d.nominationDate}
+                      className={`rounded-lg px-1.5 py-1 text-center text-[10px] ${
+                        d.isDayRevealed
+                          ? d.dayPoints && d.dayPoints > 0
+                            ? "bg-[#fee2e2] font-bold text-[#991b1b]"
+                            : "bg-[#f8edd7] text-[#5c4b32]"
+                          : "bg-slate-100 text-slate-400"
+                      }`}
+                      title={`${formatTripDate(d.nominationDate)}: ${
+                        d.isDayRevealed ? `${d.dayPoints} pt(s)` : "Hidden"
+                      }`}
+                    >
+                      <span className="block text-[8px] font-bold uppercase opacity-75">
+                        D{d.dayNumber}
+                      </span>
+                      <span>{d.isDayRevealed ? `${d.dayPoints}pt` : "🔒"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </FormModal>
+  );
+}
+
+function PeopleDirectoryModal({
+  isOpen,
+  people,
+  expenses,
+  todos,
+  vndPerPhp,
+  onClose,
+  onSelectPerson,
+}: {
+  isOpen: boolean;
+  people: Participant[];
+  expenses: Expense[];
+  todos: Todo[];
+  vndPerPhp: number;
+  onClose: () => void;
+  onSelectPerson: (person: Participant) => void;
+}) {
+  return (
+    <FormModal
+      isOpen={isOpen}
+      eyebrow="Trip housemates"
+      title={`${people.length} people on this trip`}
+      onClose={onClose}
+    >
+      <div className="space-y-2.5">
+        <p className="mb-2 text-xs text-[#5c4b32]">
+          Tap anyone below to view their full profile, age, details, expense breakdown (shares & paid), and assigned todos.
+        </p>
+        {people.map((person) => {
+          const shareEntries = expenses.flatMap((expense) =>
+            expense.shares
+              .filter((share) => share.person_id === person.id)
+              .map((share) => ({
+                amount: share.amount,
+                isPaid: share.is_paid,
+                isPeso: Boolean(expense.is_peso),
+              })),
+          );
+          const totalSharesVnd = shareEntries.reduce(
+            (sum, item) => sum + toVnd(item.amount, item.isPeso, vndPerPhp),
+            0,
+          );
+          const totalSharesPhp = shareEntries.reduce(
+            (sum, item) => sum + toPhp(item.amount, item.isPeso, vndPerPhp),
+            0,
+          );
+          const assignedTodosCount = todos.filter((todo) =>
+            todo.assignments.some((a) => a.person_id === person.id),
+          ).length;
+
+          return (
+            <button
+              key={person.id}
+              type="button"
+              onClick={() => onSelectPerson(person)}
+              className="flex w-full items-center justify-between gap-3 rounded-2xl border-2 border-[#dcc294] bg-[#fffcf5] p-3.5 text-left transition hover:border-[#1d4ed8] hover:bg-white"
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <PersonAvatar
+                  name={person.name}
+                  color={person.color}
+                  sizeClass="size-12 text-sm"
+                  borderClass="border-2 border-[#facc15]"
+                />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-bold text-[#153eb5]">{person.name}</p>
+                    {person.age !== null && person.age !== undefined && (
+                      <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[10px] font-semibold text-[#1d4ed8]">
+                        Age {person.age}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-[#5c4b32]">
+                    {person.details || "Tap to view profile details, expenses & todos"}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-3 text-[10px] font-medium text-[#786242]">
+                    <span>
+                      Total share:{" "}
+                      <AnimatedCurrencyTotal
+                        amountVnd={totalSharesVnd}
+                        amountPhp={totalSharesPhp}
+                        allPeso={false}
+                      />
+                    </span>
+                    <span>· {assignedTodosCount} assigned todo{assignedTodosCount === 1 ? "" : "s"}</span>
+                  </div>
+                </div>
+              </div>
+              <ArrowRight size={16} className="shrink-0 text-[#1d4ed8]" />
+            </button>
+          );
+        })}
+      </div>
+    </FormModal>
+  );
+}
+
+function PersonProfileModal({
+  person,
+  expenses,
+  todos,
+  vndPerPhp,
+  busyShareId,
+  busyAssignmentKey,
+  onClose,
+  onBackToList,
+  onSetSharePaid,
+  onToggleAssignmentDone,
+  onUpdateProfile,
+}: {
+  person: Participant | null;
+  expenses: Expense[];
+  todos: Todo[];
+  vndPerPhp: number;
+  busyShareId: string | null;
+  busyAssignmentKey: string | null;
+  onClose: () => void;
+  onBackToList?: () => void;
+  onSetSharePaid: (expense: Expense, shareId: string, isPaid: boolean) => Promise<void>;
+  onToggleAssignmentDone: (todo: Todo, personId: string, isDone: boolean) => Promise<void>;
+  onUpdateProfile: (
+    personId: string,
+    draft: { age: number | null; details: string | null },
+  ) => Promise<void>;
+}) {
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [ageInput, setAgeInput] = useState("");
+  const [detailsInput, setDetailsInput] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState("");
+
+  useEffect(() => {
+    if (!person) return;
+    setIsEditingProfile(false);
+    setAgeInput(person.age !== null && person.age !== undefined ? String(person.age) : "");
+    setDetailsInput(person.details ?? "");
+    setProfileError("");
+  }, [person?.id, person?.age, person?.details]);
+
+  if (!person) return null;
+
+  const personShares = expenses
+    .flatMap((expense) =>
+      expense.shares
+        .filter((share) => share.person_id === person.id)
+        .map((share) => ({
+          expense,
+          share,
+          isPeso: Boolean(expense.is_peso),
+        })),
+    )
+    .sort((a, b) => b.expense.spent_at.localeCompare(a.expense.spent_at));
+
+  const personPayments = expenses
+    .flatMap((expense) =>
+      expense.payers
+        .filter((payer) => payer.person_id === person.id)
+        .map((payer) => ({
+          expense,
+          payer,
+          isPeso: Boolean(expense.is_peso),
+        })),
+    )
+    .sort((a, b) => b.expense.spent_at.localeCompare(a.expense.spent_at));
+
+  const assignedTodos = todos.filter((todo) =>
+    todo.assignments.some((item) => item.person_id === person.id),
+  );
+
+  const totalPaidVnd = personPayments.reduce(
+    (sum, item) => sum + toVnd(item.payer.amount_paid, item.isPeso, vndPerPhp),
+    0,
+  );
+  const totalPaidPhp = personPayments.reduce(
+    (sum, item) => sum + toPhp(item.payer.amount_paid, item.isPeso, vndPerPhp),
+    0,
+  );
+  const allPaidPeso =
+    personPayments.length > 0 && personPayments.every((item) => item.isPeso);
+
+  const totalShareVnd = personShares.reduce(
+    (sum, item) => sum + toVnd(item.share.amount, item.isPeso, vndPerPhp),
+    0,
+  );
+  const totalSharePhp = personShares.reduce(
+    (sum, item) => sum + toPhp(item.share.amount, item.isPeso, vndPerPhp),
+    0,
+  );
+  const allSharesPeso =
+    personShares.length > 0 && personShares.every((item) => item.isPeso);
+
+  const unpaidShareVnd = personShares
+    .filter((item) => !item.share.is_paid)
+    .reduce((sum, item) => sum + toVnd(item.share.amount, item.isPeso, vndPerPhp), 0);
+  const unpaidSharePhp = personShares
+    .filter((item) => !item.share.is_paid)
+    .reduce((sum, item) => sum + toPhp(item.share.amount, item.isPeso, vndPerPhp), 0);
+
+  async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!person) return;
+    setProfileError("");
+    const parsedAge = ageInput.trim() === "" ? null : Number(ageInput);
+    if (parsedAge !== null && (!Number.isInteger(parsedAge) || parsedAge < 0)) {
+      setProfileError("Enter a valid whole number for age.");
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      await onUpdateProfile(person.id, {
+        age: parsedAge,
+        details: detailsInput.trim() || null,
+      });
+      setIsEditingProfile(false);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Could not update profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  return (
+    <FormModal
+      isOpen={Boolean(person)}
+      eyebrow="Housemate profile"
+      title={person.name}
+      onClose={onClose}
+    >
+      <div className="space-y-6">
+        {onBackToList && (
+          <div>
+            <button
+              type="button"
+              onClick={onBackToList}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#dcc294] bg-[#fffcf5] px-3 py-1 text-xs font-semibold text-[#153eb5] hover:bg-[#fef08a]"
+            >
+              <ChevronLeft size={14} />
+              All {7} people
+            </button>
+          </div>
+        )}
+
+        <div className="rounded-2xl border-2 border-[#facc15] bg-gradient-to-r from-[#153eb5] via-[#1d4ed8] to-[#e11d2a] p-4 text-white shadow-sm sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <PersonAvatar
+                name={person.name}
+                color={person.color}
+                sizeClass="size-16 text-lg"
+                borderClass="border-2 border-[#fde047]"
+              />
+              <div>
+                <h3 className="text-xl font-extrabold tracking-[-0.03em] text-white">
+                  {person.name}
+                </h3>
+                <p className="mt-1 inline-flex items-center rounded-full bg-[#facc15] px-2.5 py-0.5 text-xs font-bold text-[#172554]">
+                  {person.age !== null && person.age !== undefined
+                    ? `Age: ${person.age}`
+                    : "Age: Not specified"}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsEditingProfile((open) => !open)}
+              className="min-h-8 rounded-full border border-[#fde047]/60 bg-black/20 px-3 py-1 text-xs font-semibold text-[#fde047] transition hover:bg-black/35"
+            >
+              {isEditingProfile ? "Cancel edit" : "Edit profile"}
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-white/15 bg-black/20 p-3.5 text-xs leading-5 text-[#fef9c3]">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#fde047]">
+              Details
+            </p>
+            <p className="mt-1 whitespace-pre-wrap">
+              {person.details || "No profile details added yet."}
+            </p>
+          </div>
+
+          {isEditingProfile && (
+            <form
+              onSubmit={handleSaveProfile}
+              className="mt-4 space-y-3 rounded-xl bg-white p-3.5 text-[#172554]"
+            >
+              <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
+                    Age
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={ageInput}
+                    onChange={(event) => setAgeInput(event.target.value)}
+                    placeholder="e.g. 26"
+                    className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-[#5c4b32]">
+                    Details
+                  </span>
+                  <input
+                    type="text"
+                    value={detailsInput}
+                    onChange={(event) => setDetailsInput(event.target.value)}
+                    placeholder="Add bio, role, notes, or preferences…"
+                    className="h-9 w-full rounded-lg border border-[#dcc294] px-2.5 text-xs outline-none focus:border-[#1d4ed8]"
+                  />
+                </label>
+              </div>
+              {profileError && (
+                <p role="alert" className="text-xs font-medium text-rose-700">
+                  {profileError}
+                </p>
+              )}
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="min-h-8 rounded-full bg-[#1d4ed8] px-4 py-1 text-xs font-semibold text-[#fde047] hover:bg-[#153eb5] disabled:opacity-50"
+                >
+                  {isSavingProfile ? "Saving…" : "Save profile"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="animate-fade-up rounded-2xl border-2 border-[#dcc294] bg-[#fffcf5] p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#e11d2a]">
+              Total Share ({personShares.length} expense{personShares.length === 1 ? "" : "s"})
+            </p>
+            <p className="mt-1 text-base font-bold text-[#153eb5]">
+              <AnimatedCurrencyTotal
+                amountVnd={totalShareVnd}
+                amountPhp={totalSharePhp}
+                allPeso={allSharesPeso}
+              />
+            </p>
+            <p className="mt-1 text-[11px] text-[#786242]">
+              Unpaid share:{" "}
+              <span className="font-semibold text-[#e11d2a]">
+                <AnimatedCurrencyTotal
+                  amountVnd={unpaidShareVnd}
+                  amountPhp={unpaidSharePhp}
+                  allPeso={allSharesPeso}
+                />
+              </span>
+            </p>
+          </div>
+          <div className="animate-fade-up rounded-2xl border-2 border-[#dcc294] bg-[#fffcf5] p-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-[#153eb5]">
+              Total Paid By {person.name} ({personPayments.length})
+            </p>
+            <p className="mt-1 text-base font-bold text-[#153eb5]">
+              <AnimatedCurrencyTotal
+                amountVnd={totalPaidVnd}
+                amountPhp={totalPaidPhp}
+                allPeso={allPaidPeso}
+              />
+            </p>
+            <p className="mt-1 text-[11px] text-[#786242]">
+              Recorded payer contributions
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
+              Expense Shares Breakdown
+            </p>
+            <h4 className="text-sm font-bold text-[#153eb5]">
+              {person.name}’s share per expense
+            </h4>
+          </div>
+          {personShares.length === 0 ? (
+            <p className="rounded-xl border border-[#dcc294] bg-[#fffcf5] px-4 py-3 text-xs text-[#786242]">
+              No expense shares recorded for {person.name} yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {personShares.map(({ expense, share, isPeso }) => (
+                <li
+                  key={share.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dcc294] bg-[#fffcf5] px-3.5 py-2.5 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-[#172554]">
+                        {expense.description || "Untitled expense"}
+                      </span>
+                      <span className="rounded-full bg-[#fef08a] px-2 py-0.5 text-[9px] font-semibold text-[#713f12]">
+                        {expense.category?.name ?? "No category"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-[#786242]">
+                      {formatTripDate(expense.spent_at.slice(0, 10))} · Total expense:{" "}
+                      {formatExpenseAmount(expense.amount, isPeso, vndPerPhp)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-[#153eb5]">
+                      {formatExpenseAmount(share.amount, isPeso, vndPerPhp)}
+                    </span>
+                    <button
+                      type="button"
+                      aria-pressed={share.is_paid}
+                      disabled={busyShareId === share.id}
+                      onClick={() => void onSetSharePaid(expense, share.id, !share.is_paid)}
+                      className={`min-h-7 rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-50 ${
+                        share.is_paid
+                          ? "bg-[#dcfce7] text-[#15803d]"
+                          : "border border-[#e11d2a]/40 bg-white text-[#e11d2a]"
+                      }`}
+                    >
+                      {busyShareId === share.id ? "Saving…" : share.is_paid ? "Paid" : "Unpaid"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#153eb5]">
+              Paid By {person.name}
+            </p>
+            <h4 className="text-sm font-bold text-[#153eb5]">
+              Expenses paid by {person.name}
+            </h4>
+          </div>
+          {personPayments.length === 0 ? (
+            <p className="rounded-xl border border-[#dcc294] bg-[#fffcf5] px-4 py-3 text-xs text-[#786242]">
+              No payer records for {person.name} yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {personPayments.map(({ expense, payer, isPeso }) => (
+                <li
+                  key={payer.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#dcc294] bg-[#fffcf5] px-3.5 py-2.5 text-xs"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold text-[#172554]">
+                        {expense.description || "Untitled expense"}
+                      </span>
+                      <span className="rounded-full bg-[#dbeafe] px-2 py-0.5 text-[9px] font-semibold text-[#1d4ed8]">
+                        {expense.category?.name ?? "No category"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-[#786242]">
+                      {formatTripDate(expense.spent_at.slice(0, 10))} · Total expense:{" "}
+                      {formatExpenseAmount(expense.amount, isPeso, vndPerPhp)}
+                    </p>
+                  </div>
+                  <span className="font-bold text-[#15803d]">
+                    Paid {formatExpenseAmount(payer.amount_paid, isPeso, vndPerPhp)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="space-y-3 rounded-2xl border-2 border-[#facc15] bg-[#fef9c3] p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#a16207]">
+                Assigned Todos
+              </p>
+              <h4 className="text-sm font-bold text-[#422006]">
+                {person.name}’s tasks ({assignedTodos.length})
+              </h4>
+            </div>
+          </div>
+          {assignedTodos.length === 0 ? (
+            <p className="rounded-xl border border-[#fde047] bg-white/80 px-3.5 py-2.5 text-xs text-[#854d0e]">
+              No todos assigned to {person.name} yet.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {assignedTodos.map((todo) => {
+                const assignment = todo.assignments.find((a) => a.person_id === person.id);
+                const isDone = Boolean(assignment?.is_done || todo.done);
+                const assignKey = `${todo.id}:${person.id}`;
+                const isBusy = busyAssignmentKey === assignKey;
+                return (
+                  <li
+                    key={todo.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#facc15] bg-white px-3.5 py-2.5 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`font-semibold ${
+                          isDone ? "text-[#854d0e] line-through" : "text-[#422006]"
+                        }`}
+                      >
+                        {todo.name}
+                      </p>
+                      {todo.comment && (
+                        <p className="mt-0.5 text-[11px] text-[#713f12]/80">{todo.comment}</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      aria-pressed={isDone}
+                      onClick={() =>
+                        void onToggleAssignmentDone(todo, person.id, !assignment?.is_done)
+                      }
+                      className={`min-h-7 rounded-full px-3 py-0.5 text-[10px] font-bold transition disabled:opacity-50 ${
+                        isDone
+                          ? "bg-[#fde047] text-[#713f12]"
+                          : "border border-[#eab308] bg-[#fefce8] text-[#854d0e]"
+                      }`}
+                    >
+                      {isBusy ? "Saving…" : isDone ? "Done ✓" : "Mark done"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+    </FormModal>
+  );
+}
+
 function getSampleCoordinates(city: string): {
   location_name: string;
   address: string;
@@ -1072,17 +2617,17 @@ function getSampleCoordinates(city: string): {
 } {
   if (city.includes("Da Nang") && !city.startsWith("Hoi An")) {
     return {
-      location_name: "Đà Nẵng",
-      address: "Da Nang, Vietnam",
-      latitude: 16.0544,
-      longitude: 108.2022,
+      location_name: "Đà Nẵng Stay",
+      address: "27 Vũng Thùng 1, Sơn Trà, Đà Nẵng 550000, Vietnam",
+      latitude: 16.0772,
+      longitude: 108.2414,
     };
   }
   return {
-    location_name: "Hội An Ancient Town",
-    address: "Hoi An, Quang Nam, Vietnam",
-    latitude: 15.8801,
-    longitude: 108.338,
+    location_name: "Hội An Stay",
+    address: "12 Trần Cao Vân, Sơn Phong, Tp. Hội An, Quảng Nam, Vietnam",
+    latitude: 15.8825,
+    longitude: 108.3292,
   };
 }
 
@@ -1122,13 +2667,65 @@ function ItineraryForm({
       : "",
   );
   const [description, setDescription] = useState(initialEntry?.description ?? "");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<PickedPlace[]>([]);
+  const [isSearchingPlaces, setIsSearchingPlaces] = useState(false);
   const [mapError, setMapError] = useState("");
   const [error, setError] = useState("");
 
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
   const markerInstanceRef = useRef<any>(null);
+
+  function selectPlace(place: PickedPlace) {
+    setLocationName(place.locationName);
+    setLocationPin((current) => current || place.locationName);
+    if (place.address) setAddress(place.address);
+    if (place.googlePlaceId) setGooglePlaceId(place.googlePlaceId);
+    setLatitude(String(place.latitude));
+    setLongitude(String(place.longitude));
+    setSearchQuery(place.locationName);
+    setSearchResults([]);
+
+    const map = mapInstanceRef.current;
+    const marker = markerInstanceRef.current;
+    if (map && marker) {
+      const pos = { lat: place.latitude, lng: place.longitude };
+      map.panTo(pos);
+      map.setZoom(16);
+      marker.setPosition(pos);
+      marker.setVisible(true);
+    }
+  }
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setSearchResults([]);
+      setIsSearchingPlaces(false);
+      return;
+    }
+    let isCancelled = false;
+    setIsSearchingPlaces(true);
+    const timer = window.setTimeout(() => {
+      void searchPlacesNew(trimmed)
+        .then((results) => {
+          if (!isCancelled) {
+            setSearchResults(results);
+          }
+        })
+        .finally(() => {
+          if (!isCancelled) {
+            setIsSearchingPlaces(false);
+          }
+        });
+    }, 320);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!hasGoogleMapsApiKey()) return;
@@ -1166,8 +2763,6 @@ function ItineraryForm({
         });
         markerInstanceRef.current = marker;
 
-        const geocoder = new maps.Geocoder();
-
         map.addListener("click", (event: any) => {
           const lat = event?.latLng?.lat?.();
           const lng = event?.latLng?.lng?.();
@@ -1180,51 +2775,14 @@ function ItineraryForm({
           marker.setPosition({ lat: nextLat, lng: nextLng });
           marker.setVisible(true);
 
-          geocoder.geocode({ location: { lat: nextLat, lng: nextLng } }, (results: any, status: string) => {
-            if (status === "OK" && results?.[0]) {
-              const top = results[0];
-              const formatted = top.formatted_address ?? "";
-              setAddress(formatted);
-              if (top.place_id) setGooglePlaceId(top.place_id);
-              setLocationName((current) => current || formatted.split(",")[0] || "Pinned location");
-              setLocationPin((current) => current || formatted.split(",")[0] || "Pinned location");
-            }
+          void reverseGeocodeNew(nextLat, nextLng).then((info) => {
+            if (!info) return;
+            if (info.address) setAddress(info.address);
+            if (info.googlePlaceId) setGooglePlaceId(info.googlePlaceId);
+            setLocationName((current) => current || info.locationName);
+            setLocationPin((current) => current || info.locationName);
           });
         });
-
-        if (searchInputRef.current && maps.places?.Autocomplete) {
-          const autocomplete = new maps.places.Autocomplete(searchInputRef.current, {
-            fields: ["place_id", "name", "formatted_address", "geometry"],
-          });
-          autocomplete.bindTo("bounds", map);
-          autocomplete.addListener("place_changed", () => {
-            const place = autocomplete.getPlace();
-            if (!place) return;
-
-            const pickedName = place.name || "";
-            const pickedAddress = place.formatted_address || "";
-            const pickedPlaceId = place.place_id || "";
-            if (pickedName) {
-              setLocationName(pickedName);
-              setLocationPin((current) => current || pickedName);
-            }
-            if (pickedAddress) setAddress(pickedAddress);
-            if (pickedPlaceId) setGooglePlaceId(pickedPlaceId);
-
-            const loc = place.geometry?.location;
-            if (loc) {
-              const lat = Number(loc.lat().toFixed(6));
-              const lng = Number(loc.lng().toFixed(6));
-              setLatitude(String(lat));
-              setLongitude(String(lng));
-              const pos = { lat, lng };
-              map.panTo(pos);
-              map.setZoom(16);
-              marker.setPosition(pos);
-              marker.setVisible(true);
-            }
-          });
-        }
       })
       .catch((loadErr) => {
         if (!isCancelled) {
@@ -1359,22 +2917,54 @@ function ItineraryForm({
           )}
         </div>
 
-        <label className="mb-3 block">
+        <div className="relative mb-3">
           <span className="mb-1.5 block text-[11px] font-semibold text-[#536058]">
-            Search place on Google Maps
+            Search place on Google Maps (Places API New)
           </span>
-          <input
-            ref={searchInputRef}
-            type="text"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-              }
-            }}
-            placeholder="Search a place, hotel, restaurant, or attraction in Vietnam…"
-            className="h-10 w-full rounded-xl border border-[#e3e6df] bg-[#fafaf8] px-3 text-xs outline-none focus:border-emerald-700 focus:bg-white"
-          />
-        </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (searchResults.length > 0) {
+                    selectPlace(searchResults[0]);
+                  }
+                }
+              }}
+              placeholder="Search a place, hotel, restaurant, or attraction in Vietnam…"
+              className="h-10 w-full rounded-xl border border-[#e3e6df] bg-[#fafaf8] px-3 text-xs outline-none focus:border-[#b91c1c] focus:bg-white"
+            />
+          </div>
+          {isSearchingPlaces && (
+            <p className="mt-1 text-[11px] text-[#8c6f60]">Searching places…</p>
+          )}
+          {searchResults.length > 0 && (
+            <ul className="absolute z-30 mt-1 max-h-56 w-full divide-y divide-[#f3e5d0] overflow-y-auto rounded-xl border border-[#eddcc4] bg-white shadow-lg">
+              {searchResults.map((place, idx) => (
+                <li key={`${place.googlePlaceId || place.locationName}-${idx}`}>
+                  <button
+                    type="button"
+                    onClick={() => selectPlace(place)}
+                    className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition hover:bg-[#fffaf3]"
+                  >
+                    <MapPin size={14} className="mt-0.5 shrink-0 text-[#b91c1c]" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold text-[#2a1810]">
+                        {place.locationName}
+                      </p>
+                      {place.address && (
+                        <p className="truncate text-[11px] text-[#785c4e]">{place.address}</p>
+                      )}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {mapError ? (
           <p className="mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">{mapError}</p>
@@ -1577,7 +3167,6 @@ function ItineraryDayMap({
           polylineRef.current = null;
         }
 
-        const geocoder = new maps.Geocoder();
         const bounds = new maps.LatLngBounds();
         const pathCoordinates: { lat: number; lng: number }[] = [];
 
@@ -1595,16 +3184,10 @@ function ItineraryDayMap({
           } else {
             const query = entry.address || entry.location_name || entry.location_pin;
             if (query) {
-              pos = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
-                geocoder.geocode({ address: `${query}, Vietnam` }, (results: any, status: string) => {
-                  if (status === "OK" && results?.[0]?.geometry?.location) {
-                    const loc = results[0].geometry.location;
-                    resolve({ lat: loc.lat(), lng: loc.lng() });
-                  } else {
-                    resolve(null);
-                  }
-                });
-              });
+              const found = await searchPlacesNew(`${query}, Vietnam`);
+              if (found.length > 0) {
+                pos = { lat: found[0].latitude, lng: found[0].longitude };
+              }
             }
           }
 
@@ -1710,6 +3293,7 @@ function ItineraryDayMap({
 
 function ItineraryTimeline({
   entries,
+  weatherByDate,
   isSaving,
   message,
   error,
@@ -1718,6 +3302,7 @@ function ItineraryTimeline({
   onDeleteEntry,
 }: {
   entries: ItineraryRow[];
+  weatherByDate: Record<string, DayWeather>;
   isSaving: boolean;
   message: string;
   error: string;
@@ -1756,20 +3341,20 @@ function ItineraryTimeline({
   const dayEntries = displayEntries.filter((entry) => entry.date === selectedDate);
 
   return (
-    <section className="rounded-[24px] border border-[#eddcc4] bg-white p-5 sm:p-7">
+    <section className="rounded-[24px] border-2 border-[#dcc294] bg-[#fffcf5] p-5 shadow-xs sm:p-7">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#b91c1c]">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#e11d2a]">
             The plan so far
           </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-[#2a1810]">
+          <h2 className="mt-1 text-xl font-bold tracking-[-0.03em] text-[#153eb5]">
             {isUsingSample
               ? "Sample itinerary · awaiting database entries"
               : `${dates.length} day${dates.length === 1 ? "" : "s"} planned`}
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-[#fef3c7] px-3 py-1.5 text-xs font-medium text-[#991b1b]">
+          <span className="rounded-full border border-[#eab308]/40 bg-[#fef08a] px-3 py-1.5 text-xs font-semibold text-[#153eb5]">
             Times are local to Vietnam
           </span>
           <button
@@ -1778,7 +3363,7 @@ function ItineraryTimeline({
               setEditingEntry(null);
               setShowAddForm(true);
             }}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[#b91c1c] px-3.5 py-1.5 text-xs font-semibold text-[#fef3c7] shadow-sm transition hover:bg-[#991b1b]"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-[#1d4ed8] px-3.5 py-1.5 text-xs font-semibold text-[#fef08a] shadow-sm ring-1 ring-[#facc15]/50 transition hover:bg-[#153eb5]"
           >
             <Plus size={14} />
             Add activity
@@ -1829,31 +3414,45 @@ function ItineraryTimeline({
       </FormModal>
 
       <div className="-mx-1 mb-6 flex gap-2 overflow-x-auto px-1 pb-1">
-        {dates.map((date, index) => (
-          <button
-            key={date}
-            type="button"
-            onClick={() => {
-              setActiveDate(date);
-              setSelectedEntryId(null);
-            }}
-            aria-pressed={selectedDate === date}
-            className={`min-w-[67px] rounded-2xl px-3 py-2.5 text-left transition-colors ${
-              selectedDate === date
-                ? "bg-[#b91c1c] text-[#fef3c7] shadow-sm"
-                : "bg-[#fdf4e7] text-[#785c4e] hover:bg-[#f7ebd9]"
-            }`}
-          >
-            <span className="block text-[9px] font-bold tracking-[0.12em] opacity-70">
-              DAY {index + 1}
-            </span>
-            <span className="mt-1 block text-sm font-semibold">
-              {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
-                new Date(`${date}T12:00:00`),
+        {dates.map((date, index) => {
+          const dayWeather = weatherByDate[date];
+          return (
+            <button
+              key={date}
+              type="button"
+              onClick={() => {
+                setActiveDate(date);
+                setSelectedEntryId(null);
+              }}
+              aria-pressed={selectedDate === date}
+              className={`min-w-[92px] rounded-2xl border px-3 py-2.5 text-left transition-colors ${
+                selectedDate === date
+                  ? "border-[#facc15] bg-[#1d4ed8] text-[#fef08a] shadow-sm"
+                  : "border-[#dcc294] bg-[#f8edd7] text-[#5c4b32] hover:bg-[#f1dfc0]"
+              }`}
+            >
+              {dayWeather && (
+                <span
+                  className={`mb-1 flex items-center gap-1 text-[10px] font-semibold ${
+                    selectedDate === date ? "text-[#fde047]" : "text-[#e11d2a]"
+                  }`}
+                >
+                  <span>{dayWeather.emoji}</span>
+                  <span>{dayWeather.tempMax}°C</span>
+                  <span className="truncate opacity-85">{dayWeather.label}</span>
+                </span>
               )}
-            </span>
-          </button>
-        ))}
+              <span className="block text-[9px] font-bold tracking-[0.12em] opacity-70">
+                DAY {index + 1}
+              </span>
+              <span className="mt-0.5 block text-sm font-semibold">
+                {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+                  new Date(`${date}T12:00:00`),
+                )}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[#eff0eb] pb-4">
@@ -1871,12 +3470,21 @@ function ItineraryTimeline({
             ).join(" · ")}
           </p>
         </div>
-        <span className="flex items-center gap-1.5 text-xs text-[#747d77]">
-          <CalendarDays size={14} />
-          {selectedDate
-            ? `${new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(new Date(`${selectedDate}T12:00:00`))}, ${formatTripDate(selectedDate)}`
-            : "No dates"}
-        </span>
+        <div className="text-right">
+          {selectedDate && weatherByDate[selectedDate] && (
+            <p className="mb-1 text-xs font-semibold text-[#b91c1c]">
+              {weatherByDate[selectedDate].emoji} {weatherByDate[selectedDate].tempMin}°–
+              {weatherByDate[selectedDate].tempMax}°C · {weatherByDate[selectedDate].label} (
+              {weatherByDate[selectedDate].city})
+            </p>
+          )}
+          <span className="inline-flex items-center gap-1.5 text-xs text-[#747d77]">
+            <CalendarDays size={14} />
+            {selectedDate
+              ? `${new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(new Date(`${selectedDate}T12:00:00`))}, ${formatTripDate(selectedDate)}`
+              : "No dates"}
+          </span>
+        </div>
       </div>
 
       <ItineraryDayMap
@@ -2030,6 +3638,9 @@ function ItineraryTimeline({
 
 function StayCard({
   city,
+  address,
+  wifiNetwork,
+  wifiPassword,
   dates,
   nights,
   variant,
@@ -2039,6 +3650,9 @@ function StayCard({
   airbnbSummary,
 }: {
   city: string;
+  address: string;
+  wifiNetwork?: string;
+  wifiPassword?: string;
   dates: string;
   nights: string;
   variant: "hoi-an" | "da-nang";
@@ -2050,6 +3664,8 @@ function StayCard({
   const isHoiAn = variant === "hoi-an";
   const [activeIndex, setActiveIndex] = useState(0);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const [copiedWifi, setCopiedWifi] = useState(false);
 
   useModalBackHandler(isGalleryOpen, () => setIsGalleryOpen(false));
 
@@ -2185,7 +3801,74 @@ function StayCard({
             </a>
           </div>
         </div>
+        <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#f3e5d0] bg-[#fffaf3] px-3.5 py-2.5">
+          <div className="flex min-w-0 flex-1 items-start gap-2">
+            <MapPin size={15} className="mt-0.5 shrink-0 text-[#b91c1c]" />
+            <p className="text-xs font-medium leading-5 text-[#2a1810]">{address}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(address);
+                setCopiedAddress(true);
+                window.setTimeout(() => setCopiedAddress(false), 1800);
+              }}
+              className="min-h-7 rounded-full border border-[#eddcc4] bg-white px-2.5 py-0.5 text-[11px] font-semibold text-[#785c4e] transition hover:bg-[#fef3c7] hover:text-[#991b1b]"
+            >
+              {copiedAddress ? "Copied!" : "Copy"}
+            </button>
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-7 items-center gap-1 rounded-full bg-[#fef3c7] px-2.5 py-0.5 text-[11px] font-semibold text-[#991b1b] transition hover:bg-[#fde68a]"
+            >
+              Maps
+              <ExternalLink size={10} />
+            </a>
+          </div>
+        </div>
+        {(wifiNetwork || wifiPassword) && (
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#fde047] bg-[#fefce8] px-3.5 py-2.5">
+            <div className="flex min-w-0 flex-1 items-start gap-2">
+              <Wifi size={15} className="mt-0.5 shrink-0 text-[#b45309]" />
+              <div className="min-w-0 text-xs leading-5 text-[#422006]">
+                {wifiNetwork && (
+                  <p>
+                    <span className="font-semibold text-[#854d0e]">Wi-Fi Network:</span>{" "}
+                    {wifiNetwork}
+                  </p>
+                )}
+                {wifiPassword && (
+                  <p>
+                    <span className="font-semibold text-[#854d0e]">Password:</span>{" "}
+                    <code className="rounded bg-[#fef08a] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#713f12]">
+                      {wifiPassword}
+                    </code>
+                  </p>
+                )}
+              </div>
+            </div>
+            {wifiPassword && (
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(wifiPassword);
+                  setCopiedWifi(true);
+                  window.setTimeout(() => setCopiedWifi(false), 1800);
+                }}
+                className="min-h-7 shrink-0 rounded-full border border-[#eab308] bg-white px-2.5 py-0.5 text-[11px] font-semibold text-[#854d0e] transition hover:bg-[#fef08a]"
+              >
+                {copiedWifi ? "Copied!" : "Copy password"}
+              </button>
+            )}
+          </div>
+        )}
         <div className="mt-4 overflow-x-auto border-t border-[#eff0eb] pt-4">
+          <p className="mb-3 text-center text-xs font-medium text-[#991b1b]">
+            Tap below Airbnb link to view in Airbnb
+          </p>
           <div
             className="airbnb-embed-frame"
             data-id={airbnbId}
@@ -2282,54 +3965,72 @@ function StayCard({
 
 function FlightCard({
   label,
+  flightNumber,
   date,
   departure,
   departureCity,
+  departureTerminal,
   arrival,
   arrivalCity,
+  arrivalTerminal,
   note,
 }: {
   label: string;
+  flightNumber: string;
   date: string;
   departure: string;
   departureCity: string;
+  departureTerminal: string;
   arrival: string;
   arrivalCity: string;
+  arrivalTerminal: string;
   note: string;
 }) {
   return (
-    <article className="overflow-hidden rounded-[24px] border border-[#e8e9e3] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eff0eb] px-5 py-4 sm:px-6">
+    <article className="overflow-hidden rounded-[24px] border border-[#eddcc4] bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f3e5d0] px-5 py-4 sm:px-6">
         <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-full bg-[#edf5ee] text-emerald-800">
+          <span className="grid size-10 place-items-center rounded-full bg-[#fef3c7] text-[#b91c1c]">
             <Plane size={17} />
           </span>
           <div>
-            <p className="text-sm font-semibold text-[#26342d]">{label}</p>
-            <p className="mt-0.5 text-xs text-[#8b928d]">{date}</p>
+            <p className="text-sm font-semibold text-[#2a1810]">{label}</p>
+            <p className="mt-0.5 text-xs text-[#8c6f60]">{date}</p>
           </div>
         </div>
-        <span className="flex items-center gap-1.5 rounded-full bg-[#edf7ef] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-800">
-          <BadgeCheck size={13} />
-          Time noted
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-[#b91c1c] px-3 py-1.5 text-xs font-bold tracking-wide text-[#fef3c7]">
+            Flight {flightNumber}
+          </span>
+          <span className="flex items-center gap-1.5 rounded-full bg-[#fef3c7] px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-[#991b1b]">
+            <BadgeCheck size={13} />
+            Confirmed
+          </span>
+        </div>
       </div>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-5 py-6 sm:px-8 sm:py-7">
         <div>
-          <p className="text-2xl font-semibold tracking-[-0.04em] text-[#17231f]">{departure}</p>
-          <p className="mt-1 text-xs text-[#7b847e]">{departureCity}</p>
+          <p className="text-2xl font-semibold tracking-[-0.04em] text-[#2a1810]">{departure}</p>
+          <p className="mt-1 text-xs font-semibold text-[#5c3d2e]">{departureCity}</p>
+          <p className="mt-0.5 text-[11px] text-[#8c6f60]">{departureTerminal}</p>
         </div>
-        <div className="flex min-w-16 items-center gap-1 text-[#a2aaa4]">
-          <span className="h-px flex-1 border-t border-dashed border-[#cbd1cb]" />
-          <Plane size={15} className="rotate-90 text-emerald-700" />
-          <span className="h-px flex-1 border-t border-dashed border-[#cbd1cb]" />
+        <div className="flex min-w-16 flex-col items-center gap-1 text-[#a2aaa4]">
+          <span className="text-[10px] font-bold tracking-wider text-[#b91c1c]">
+            {flightNumber}
+          </span>
+          <div className="flex w-full items-center gap-1">
+            <span className="h-px flex-1 border-t border-dashed border-[#d6bfa3]" />
+            <Plane size={15} className="rotate-90 text-[#b91c1c]" />
+            <span className="h-px flex-1 border-t border-dashed border-[#d6bfa3]" />
+          </div>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-semibold tracking-[-0.04em] text-[#17231f]">{arrival}</p>
-          <p className="mt-1 text-xs text-[#7b847e]">{arrivalCity}</p>
+          <p className="text-2xl font-semibold tracking-[-0.04em] text-[#2a1810]">{arrival}</p>
+          <p className="mt-1 text-xs font-semibold text-[#5c3d2e]">{arrivalCity}</p>
+          <p className="mt-0.5 text-[11px] text-[#8c6f60]">{arrivalTerminal}</p>
         </div>
       </div>
-      <div className="mx-5 mb-5 rounded-xl bg-[#f7f7f3] px-4 py-3 text-xs leading-5 text-[#747d77] sm:mx-6 sm:mb-6">
+      <div className="mx-5 mb-5 rounded-xl bg-[#fffaf3] px-4 py-3 text-xs leading-5 text-[#785c4e] sm:mx-6 sm:mb-6">
         {note}
       </div>
     </article>
@@ -2880,6 +4581,7 @@ function ExpensePanel({
   onUpdateExpense,
   onDeleteExpense,
   onSetSharePaid,
+  onSelectPerson,
 }: {
   people: Participant[];
   categories: Category[];
@@ -2898,6 +4600,7 @@ function ExpensePanel({
   onUpdateExpense: (expense: Expense, draft: ExpenseDraft) => Promise<void>;
   onDeleteExpense: (expense: Expense) => Promise<void>;
   onSetSharePaid: (expense: Expense, shareId: string, isPaid: boolean) => Promise<void>;
+  onSelectPerson: (person: Participant) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -2952,7 +4655,7 @@ function ExpensePanel({
             setEditingExpense(null);
             setShowForm(true);
           }}
-          className="mb-6 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#b91c1c] px-5 text-sm font-semibold text-[#fef3c7] shadow-sm transition hover:bg-[#991b1b] disabled:cursor-not-allowed disabled:opacity-50"
+          className="mb-6 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#1d4ed8] px-5 text-sm font-semibold text-[#fef08a] shadow-sm ring-2 ring-[#facc15]/50 transition hover:bg-[#153eb5] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus size={17} />
           Add expense
@@ -2963,11 +4666,21 @@ function ExpensePanel({
         <SummaryCard
           icon={ReceiptText}
           label="Trip spend"
-          value={allExpensesPeso ? formatPhp(totalSpendPhp) : formatVnd(totalSpendVnd)}
+          value={
+            allExpensesPeso ? (
+              <AnimatedPhp amount={totalSpendPhp} />
+            ) : (
+              <AnimatedVnd amount={totalSpendVnd} />
+            )
+          }
           caption={
-            allExpensesPeso
-              ? "All recorded expenses in PHP"
-              : `${formatPhp(totalSpendPhp)} converted`
+            allExpensesPeso ? (
+              "All recorded expenses in PHP"
+            ) : (
+              <>
+                <AnimatedPhp amount={totalSpendPhp} /> converted
+              </>
+            )
           }
           tone="dark"
         />
@@ -2975,25 +4688,43 @@ function ExpensePanel({
           icon={UsersRound}
           label="Average share"
           value={
-            allExpensesPeso
-              ? formatPhp(people.length ? totalSpendPhp / people.length : 0)
-              : formatVnd(people.length ? totalSpendVnd / people.length : 0)
+            allExpensesPeso ? (
+              <AnimatedPhp amount={people.length ? totalSpendPhp / people.length : 0} />
+            ) : (
+              <AnimatedVnd amount={people.length ? totalSpendVnd / people.length : 0} />
+            )
           }
           caption={
-            allExpensesPeso
-              ? `Across ${people.length} people · equal-share estimate`
-              : `${formatPhp(people.length ? totalSpendPhp / people.length : 0)} · across ${people.length} people`
+            allExpensesPeso ? (
+              `Across ${people.length} people · equal-share estimate`
+            ) : (
+              <>
+                <AnimatedPhp amount={people.length ? totalSpendPhp / people.length : 0} /> · across{" "}
+                {people.length} people
+              </>
+            )
           }
           tone="light"
         />
         <SummaryCard
           icon={ArrowLeftRight}
           label="Unpaid shares"
-          value={allExpensesPeso ? formatPhp(unpaidTotalPhp) : formatVnd(unpaidTotalVnd)}
+          value={
+            allExpensesPeso ? (
+              <AnimatedPhp amount={unpaidTotalPhp} />
+            ) : (
+              <AnimatedVnd amount={unpaidTotalVnd} />
+            )
+          }
           caption={
-            allExpensesPeso
-              ? `${shareCount} recorded share${shareCount === 1 ? "" : "s"}`
-              : `${formatPhp(unpaidTotalPhp)} · ${shareCount} recorded share${shareCount === 1 ? "" : "s"}`
+            allExpensesPeso ? (
+              `${shareCount} recorded share${shareCount === 1 ? "" : "s"}`
+            ) : (
+              <>
+                <AnimatedPhp amount={unpaidTotalPhp} /> · {shareCount} recorded share
+                {shareCount === 1 ? "" : "s"}
+              </>
+            )
           }
           tone="light"
         />
@@ -3086,8 +4817,8 @@ function ExpensePanel({
           </span>
           <div>
             <span className="mb-2 block text-xs font-medium text-[#747d77]">Approx. Philippine pesos</span>
-            <div className="flex h-12 items-center rounded-xl bg-[#f4f6f1] px-3 text-sm font-semibold text-[#21583b]">
-              {formatPhp(convertedPhp)}
+            <div className="flex h-12 items-center rounded-xl bg-[#f4f6f1] px-3 text-sm font-semibold text-[#153eb5]">
+              <AnimatedPhp amount={convertedPhp} />
             </div>
           </div>
         </div>
@@ -3144,27 +4875,36 @@ function ExpensePanel({
               const allUnpaidPeso =
                 unpaidEntries.length > 0 && unpaidEntries.every((item) => item.isPeso);
 
-              const paidDisplay = allPayerPeso
-                ? formatPhp(contributedPhp)
-                : `${formatVnd(contributedVnd)} (${formatPhp(contributedPhp)})`;
-              const unpaidDisplay = allUnpaidPeso
-                ? formatPhp(unpaidPhp)
-                : `${formatVnd(unpaidVnd)} (${formatPhp(unpaidPhp)})`;
-
               return (
-                <div
+                <button
+                  type="button"
                   key={person.id}
-                  className="flex items-center gap-3 rounded-xl border border-[#f3e5d0] bg-[#fffaf3] px-3 py-2.5"
+                  onClick={() => onSelectPerson(person)}
+                  className="animate-fade-up flex w-full items-center gap-3 rounded-xl border border-[#f3e5d0] bg-[#fffaf3] px-3 py-2.5 text-left transition hover:border-[#1d4ed8] hover:bg-white"
                 >
                   <PersonAvatar name={person.name} color={person.color} sizeClass="size-8 text-xs" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-[#2a1810]">{person.name}</p>
+                    <p className="truncate text-xs font-semibold text-[#153eb5]">{person.name}</p>
                     <div className="mt-1 flex flex-wrap justify-between gap-x-3 gap-y-1 text-[10px] text-[#785c4e]">
-                      <span>Paid toward expenses · {paidDisplay}</span>
-                      <span>Unpaid shares · {unpaidDisplay}</span>
+                      <span>
+                        Paid toward expenses ·{" "}
+                        <AnimatedCurrencyTotal
+                          amountVnd={contributedVnd}
+                          amountPhp={contributedPhp}
+                          allPeso={allPayerPeso}
+                        />
+                      </span>
+                      <span>
+                        Unpaid shares ·{" "}
+                        <AnimatedCurrencyTotal
+                          amountVnd={unpaidVnd}
+                          amountPhp={unpaidPhp}
+                          allPeso={allUnpaidPeso}
+                        />
+                      </span>
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })}
             {people.length === 0 && (
@@ -3244,7 +4984,11 @@ function ExpensePanel({
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="text-sm font-semibold text-[#26342d]">
-                            {formatExpenseAmount(expense.amount, isPeso, vndPerPhp)}
+                            <AnimatedExpenseAmount
+                              amount={expense.amount}
+                              isPeso={isPeso}
+                              vndPerPhp={vndPerPhp}
+                            />
                           </p>
                           <button
                             type="button"
@@ -3356,10 +5100,23 @@ function App() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [itineraryEntries, setItineraryEntries] = useState<ItineraryRow[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [nominationDays, setNominationDays] = useState<NominationDayRow[]>([]);
+  const [nominations, setNominations] = useState<NominationRow[]>([]);
+  const [nominationRevealVotes, setNominationRevealVotes] = useState<NominationRevealVoteRow[]>(
+    [],
+  );
+  const [nominationRevealStatus, setNominationRevealStatus] = useState<
+    NominationRevealStatusRow[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isItinerarySaving, setIsItinerarySaving] = useState(false);
   const [isTodoSaving, setIsTodoSaving] = useState(false);
+  const [isNominationSaving, setIsNominationSaving] = useState(false);
+  const [isNominationModalOpen, setIsNominationModalOpen] = useState(false);
+  const [isNominationsBoardOpen, setIsNominationsBoardOpen] = useState(false);
+  const [busyRevealKey, setBusyRevealKey] = useState<string | null>(null);
+  const [revealError, setRevealError] = useState("");
   const [busyShareId, setBusyShareId] = useState<string | null>(null);
   const [busyTodoId, setBusyTodoId] = useState<string | null>(null);
   const [busyAssignmentKey, setBusyAssignmentKey] = useState<string | null>(null);
@@ -3370,6 +5127,14 @@ function App() {
   const [itineraryMessage, setItineraryMessage] = useState("");
   const [todoError, setTodoError] = useState("");
   const [todoMessage, setTodoMessage] = useState("");
+  const [isPeopleDirectoryOpen, setIsPeopleDirectoryOpen] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
+  const [openedFromDirectory, setOpenedFromDirectory] = useState(false);
+  const [weather, setWeather] = useState<TripWeatherForecast>({
+    byDate: {},
+    hoiAnSummary: null,
+    daNangSummary: null,
+  });
   const [savedRate, setSavedRate] = useSavedState<number>(STORAGE_KEYS.exchangeRate, 440);
   const vndPerPhp = Number.isFinite(savedRate) && savedRate > 0 ? savedRate : 440;
 
@@ -3388,6 +5153,10 @@ function App() {
       setExpenses(data.expenses);
       setItineraryEntries(data.itinerary);
       setTodos(data.todos);
+      setNominationDays(data.nominationDays);
+      setNominations(data.nominations);
+      setNominationRevealVotes(data.nominationRevealVotes);
+      setNominationRevealStatus(data.nominationRevealStatus);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Could not load trip data.");
     } finally {
@@ -3397,6 +5166,11 @@ function App() {
 
   useEffect(() => {
     void loadTrip();
+    void fetchTripWeather()
+      .then((forecast) => setWeather(forecast))
+      .catch(() => {
+        // Ignore weather network errors silently
+      });
   }, []);
 
   async function handleCreateExpense(draft: ExpenseDraft) {
@@ -3650,29 +5424,145 @@ function App() {
     }
   }
 
+  async function handleUpdatePersonProfile(
+    personId: string,
+    draft: { age: number | null; details: string | null },
+  ) {
+    const updated = await updatePersonProfile(personId, draft);
+    setPeople((current) =>
+      current.map((person) =>
+        person.id === updated.id ? { ...person, age: updated.age, details: updated.details } : person,
+      ),
+    );
+  }
+
+  async function handleSaveNominations(
+    nominationDate: string,
+    voterPersonId: string,
+    nomineePersonIds: string[],
+    maxChoices: number,
+  ) {
+    setIsNominationSaving(true);
+    try {
+      const savedRows = await saveVoterNominationsForDay(
+        nominationDate,
+        voterPersonId,
+        nomineePersonIds,
+        maxChoices,
+      );
+      setNominations((current) => [
+        ...savedRows,
+        ...current.filter(
+          (item) =>
+            !(
+              item.nomination_date === nominationDate &&
+              item.voter_person_id === voterPersonId
+            ),
+        ),
+      ]);
+    } finally {
+      setIsNominationSaving(false);
+    }
+  }
+
+  async function handleToggleRevealVote(
+    nominationDate: string,
+    personId: string,
+    shouldVote: boolean,
+  ) {
+    const key = `${nominationDate}:${personId}`;
+    setBusyRevealKey(key);
+    setRevealError("");
+    try {
+      const result = await setNominationRevealVote(nominationDate, personId, shouldVote);
+      setNominationRevealVotes((current) => {
+        const withoutTarget = current.filter(
+          (v) => !(v.nomination_date === nominationDate && v.person_id === personId),
+        );
+        return result.vote ? [...withoutTarget, result.vote] : withoutTarget;
+      });
+      if (result.status) {
+        setNominationRevealStatus((current) => {
+          const exists = current.some((s) => s.nomination_date === nominationDate);
+          if (exists) {
+            return current.map((s) =>
+              s.nomination_date === nominationDate ? result.status! : s,
+            );
+          }
+          return [...current, result.status!];
+        });
+      }
+    } catch (err) {
+      setRevealError(
+        err instanceof Error ? err.message : "Could not update reveal vote.",
+      );
+    } finally {
+      setBusyRevealKey(null);
+    }
+  }
+
+  const totalNominationDaysCount =
+    nominationDays.length > 0 ? nominationDays.length : DEFAULT_NOMINATION_DATES.length;
+  const revealedDaysCount = (
+    nominationDays.length > 0
+      ? nominationDays.map((d) => d.nomination_date)
+      : DEFAULT_NOMINATION_DATES
+  ).filter((dateStr) => {
+    const statusRow = nominationRevealStatus.find((s) => s.nomination_date === dateStr);
+    if (statusRow) return Boolean(statusRow.is_revealed);
+    const votesForDay = nominationRevealVotes.filter((v) => v.nomination_date === dateStr);
+    return people.length > 0 && votesForDay.length >= people.length;
+  }).length;
+
+  const selectedPerson = people.find((item) => item.id === selectedPersonId) ?? null;
+
   return (
-    <div className="min-h-dvh bg-[#fffaf3] pb-[calc(5.5rem+env(safe-area-inset-bottom))] text-[#2a1810] md:pb-10">
-      <header className="sticky top-0 z-30 border-b border-[#eddcc4]/90 bg-[#fffaf3]/90 backdrop-blur-xl">
+    <div className="min-h-dvh pb-[calc(5.5rem+env(safe-area-inset-bottom))] text-[#172554] md:pb-10">
+      <header className="sticky top-0 z-30 border-b-2 border-[#d8be90] bg-[#f5e7cb]/92 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-7 lg:px-10">
           <a href="#" className="flex min-w-0 items-center gap-3 text-inherit no-underline">
-            <span className="grid size-10 shrink-0 place-items-center rounded-[14px] bg-gradient-to-br from-[#b91c1c] to-[#881313] text-[#fcd34d] shadow-sm ring-1 ring-[#fbbf24]/40">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-gradient-to-r from-[#1d4ed8] via-[#2563eb] to-[#e11d2a] text-[#fde047] shadow-sm ring-2 ring-[#facc15]">
               <Compass size={19} />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold tracking-[-0.02em] text-[#2a1810]">
-                Vietnam, together
+              <span className="block truncate text-sm font-bold tracking-[-0.02em] text-[#153eb5]">
+                From Shenzhen to zhen nalang us sa vietnam
               </span>
-              <span className="mt-0.5 hidden text-[10px] text-[#9a6b53] sm:block">
+              <span className="mt-0.5 hidden text-[10px] font-medium text-[#6b5335] sm:block">
                 Please review our important deets · Hội An & Đà Nẵng
               </span>
             </span>
           </a>
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="hidden text-right sm:block">
-              <p className="text-xs font-semibold text-[#7f1d1d]">{people.length} friends</p>
-              <p className="mt-0.5 text-[10px] text-[#9a6b53]">Nov 24 – 29, 2026</p>
+              {(weather.hoiAnSummary || weather.daNangSummary) && (
+                <p className="mb-0.5 text-[10px] font-bold text-[#e11d2a]">
+                  {weather.hoiAnSummary
+                    ? `Hội An ${weather.hoiAnSummary.emoji} ${weather.hoiAnSummary.tempMax}°C ${weather.hoiAnSummary.label}`
+                    : ""}
+                  {weather.hoiAnSummary && weather.daNangSummary ? " · " : ""}
+                  {weather.daNangSummary
+                    ? `Đà Nẵng ${weather.daNangSummary.emoji} ${weather.daNangSummary.tempMax}°C ${weather.daNangSummary.label}`
+                    : ""}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsPeopleDirectoryOpen(true)}
+                className="text-xs font-bold text-[#153eb5] hover:underline"
+              >
+                {people.length} friends
+              </button>
+              <p className="mt-0.5 text-[10px] font-medium text-[#6b5335]">Nov 24 – 29, 2026</p>
             </div>
-            <AvatarStack people={people} size="small" />
+            <AvatarStack
+              people={people}
+              size="small"
+              onSelectPerson={(person) => {
+                setOpenedFromDirectory(false);
+                setSelectedPersonId(person.id);
+              }}
+            />
           </div>
         </div>
         <nav className="mx-auto hidden max-w-7xl gap-1.5 px-7 pb-3 lg:flex lg:px-10" aria-label="Trip sections">
@@ -3684,10 +5574,10 @@ function App() {
                 key={item.id}
                 onClick={() => setActiveView(item.id)}
                 aria-current={activeView === item.id ? "page" : undefined}
-                className={`flex min-h-10 items-center gap-2 rounded-full px-4 text-xs font-semibold transition ${
+                className={`flex min-h-10 items-center gap-2 rounded-full px-4 text-xs font-bold transition ${
                   activeView === item.id
-                    ? "bg-[#b91c1c] text-[#fef3c7] shadow-sm"
-                    : "text-[#785c4e] hover:bg-[#f7ebd9]"
+                    ? "bg-[#1d4ed8] text-[#fde047] shadow-sm ring-2 ring-[#facc15]/70"
+                    : "text-[#4a3b28] hover:bg-[#ead8b5]"
                 }`}
               >
                 <Icon size={15} />
@@ -3713,52 +5603,104 @@ function App() {
         )}
         {activeView === "overview" && (
           <div className="space-y-6">
-            <section className="relative overflow-hidden rounded-[28px] border border-[#f59e0b]/30 bg-gradient-to-br from-[#881313] via-[#b91c1c] to-[#c2410c] px-5 py-7 text-white shadow-md sm:px-8 sm:py-9 lg:px-10">
-              <div className="absolute -right-10 -top-24 size-72 rounded-full border-[42px] border-[#fcd34d]/10" />
-              <div className="absolute -bottom-36 right-[18%] size-72 rounded-full bg-[#fbbf24]/15 blur-2xl" />
+            <section className="relative overflow-hidden rounded-[28px] border-2 border-[#facc15] bg-gradient-to-r from-[#0f36a8] via-[#1d4ed8] to-[#e11d2a] px-5 py-7 text-white shadow-lg sm:px-8 sm:py-9 lg:px-10">
+              <div className="absolute -right-10 -top-24 size-72 rounded-full border-[42px] border-[#fde047]/15" />
+              <div className="absolute -bottom-28 left-[38%] size-72 rounded-full bg-[#facc15]/25 blur-2xl" />
               <div className="relative z-10 grid gap-8 md:grid-cols-[1.2fr_0.8fr] md:items-end">
                 <div>
-                  <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#fde68a]">
+                  <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#fde047]">
                     <Sparkles size={13} />
                     HOI AN - DA NANG · Việt Nam
                   </p>
-                  <h1 className="mt-3 max-w-2xl text-[clamp(2rem,6vw,3.8rem)] font-semibold leading-[1.03] tracking-[-0.06em] text-[#fffbeb]">
-                    SKAI IS GOD
-                  
+                  <h1 className="mt-3 max-w-2xl text-[clamp(2rem,6vw,3.8rem)] font-extrabold leading-[1.03] tracking-[-0.05em] text-[#fffbeb] drop-shadow-[0_2px_0_rgba(217,119,6,0.6)]">
+                    PINOY BIG BRUH 7.0
                   </h1>
-                  <p className="mt-4 max-w-lg text-sm leading-6 text-[#fef3c7]/80">
+                  <p className="mt-4 max-w-lg text-sm leading-6 text-[#fef9c3]/90">
                     Tuloy na ito, sa wakas, we made it out of the group chat.
                   </p>
+                  <div className="mt-5">
+                    <button
+                      type="button"
+                      onClick={() => setIsNominationModalOpen(true)}
+                      className="group inline-flex flex-col items-start rounded-2xl border-2 border-[#fde047] bg-gradient-to-r from-[#e11d2a] via-[#dc2626] to-[#991b1b] px-5 py-3 text-left shadow-lg ring-2 ring-black/15 transition duration-200 hover:-translate-y-0.5 hover:brightness-110"
+                    >
+                      <span className="flex items-center gap-2 text-base font-black tracking-[0.08em] text-[#fde047]">
+                        NOMINATE
+                        <span className="rounded-full bg-black/25 px-2 py-0.5 text-[10px] font-bold text-white">
+                          {nominations.length} vote{nominations.length === 1 ? "" : "s"}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#fffbeb]/90">
+                        nominate A HOUSEMATE FOR EVICTION
+                      </span>
+                    </button>
+                  </div>
                 </div>
-                <div className="rounded-[20px] border border-[#fcd34d]/25 bg-black/15 p-4 backdrop-blur-sm sm:p-5">
+                <div className="rounded-[20px] border-2 border-[#fde047]/45 bg-[#0b1942]/35 p-4 backdrop-blur-sm sm:p-5">
+                  {(weather.hoiAnSummary || weather.daNangSummary) && (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#fde047]/25 pb-2.5 text-[11px] font-semibold text-[#fde047]">
+                      {weather.hoiAnSummary && (
+                        <span>
+                          Hội An (Nov 24–27): {weather.hoiAnSummary.emoji}{" "}
+                          {weather.hoiAnSummary.tempMin}°–{weather.hoiAnSummary.tempMax}°C ·{" "}
+                          {weather.hoiAnSummary.label}
+                        </span>
+                      )}
+                      {weather.daNangSummary && (
+                        <span>
+                          · Đà Nẵng (Nov 27–29): {weather.daNangSummary.emoji}{" "}
+                          {weather.daNangSummary.tempMin}°–{weather.daNangSummary.tempMax}°C ·{" "}
+                          {weather.daNangSummary.label}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 text-xs font-medium text-[#fef3c7]/85">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#fef9c3]">
                       <CalendarDays size={15} />
                       Tuesday – Sunday
                     </div>
-                    <span className="rounded-full bg-[#fbbf24]/25 px-2.5 py-1 text-[10px] font-semibold text-[#fde68a]">
+                    <span className="rounded-full bg-[#facc15] px-2.5 py-1 text-[10px] font-bold text-[#172554]">
                       5 nights
                     </span>
                   </div>
-                  <p className="mt-2 text-xl font-semibold tracking-[-0.03em] text-[#fffbeb]">
+                  <p className="mt-2 text-xl font-bold tracking-[-0.03em] text-white">
                     November 24 – 29, 2026
                   </p>
-                  <div className="my-4 h-px bg-[#fcd34d]/20" />
+                  <div className="my-4 h-px bg-[#fde047]/25" />
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-medium text-[#fffbeb]">The crew</p>
-                      <p className="mt-1 text-[10px] text-[#fef3c7]/70">One trip, split together</p>
-                    </div>
-                    <AvatarStack people={people} />
+                    <button
+                      type="button"
+                      onClick={() => setIsPeopleDirectoryOpen(true)}
+                      className="text-left transition hover:opacity-85"
+                    >
+                      <p className="text-xs font-semibold text-[#fde047] underline-offset-2 hover:underline">
+                        The Housemates ({people.length})
+                      </p>
+                      <p className="mt-1 text-[10px] text-white/80">Tap to list all or click a circle</p>
+                    </button>
+                    <AvatarStack
+                      people={people}
+                      onSelectPerson={(person) => {
+                        setOpenedFromDirectory(false);
+                        setSelectedPersonId(person.id);
+                      }}
+                    />
                   </div>
                 </div>
               </div>
-              <div className="relative z-10 mt-7 flex flex-wrap items-center gap-2 text-[11px] font-medium text-[#fef3c7]/90">
-                <span className="rounded-full border border-[#fcd34d]/30 bg-black/10 px-3 py-1.5">
+              <div className="relative z-10 mt-7 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-white">
+                <span className="rounded-full border border-[#fde047]/50 bg-[#153eb5]/60 px-3 py-1.5">
+                  {weather.hoiAnSummary
+                    ? `${weather.hoiAnSummary.emoji} ${weather.hoiAnSummary.tempMax}°C ${weather.hoiAnSummary.label} · `
+                    : ""}
                   Hoi An · Nov 24–27
                 </span>
-                <ArrowRight size={14} className="text-[#fcd34d]" />
-                <span className="rounded-full border border-[#fcd34d]/30 bg-black/10 px-3 py-1.5">
+                <ArrowRight size={14} className="text-[#fde047]" />
+                <span className="rounded-full border border-[#fde047]/50 bg-[#b91c1c]/60 px-3 py-1.5">
+                  {weather.daNangSummary
+                    ? `${weather.daNangSummary.emoji} ${weather.daNangSummary.tempMax}°C ${weather.daNangSummary.label} · `
+                    : ""}
                   Da Nang · Nov 27–29
                 </span>
               </div>
@@ -3768,13 +5710,23 @@ function App() {
               <SummaryCard
                 icon={Wallet}
                 label="Trip expenses"
-                value={allExpensesPeso ? formatPhp(totalSpendPhp) : formatVnd(totalSpendVnd)}
+                value={
+                  allExpensesPeso ? (
+                    <AnimatedPhp amount={totalSpendPhp} />
+                  ) : (
+                    <AnimatedVnd amount={totalSpendVnd} />
+                  )
+                }
                 caption={
-                  totalSpendVnd || totalSpendPhp
-                    ? allExpensesPeso
-                      ? "Recorded in Philippine pesos"
-                      : formatPhp(totalSpendPhp)
-                    : "Add costs as you go"
+                  totalSpendVnd || totalSpendPhp ? (
+                    allExpensesPeso ? (
+                      "Recorded in Philippine pesos"
+                    ) : (
+                      <AnimatedPhp amount={totalSpendPhp} />
+                    )
+                  ) : (
+                    "Add costs as you go"
+                  )
                 }
                 tone="dark"
               />
@@ -3782,15 +5734,17 @@ function App() {
                 icon={UsersRound}
                 label="Travelers"
                 value={`${people.length} people`}
-                caption="Loaded from the trip database"
+                caption="Tap to view all housemates & profiles"
                 tone="light"
+                onClick={() => setIsPeopleDirectoryOpen(true)}
               />
               <SummaryCard
-                icon={MapPin}
-                label="Two stays"
-                value="Hoi An + Da Nang"
-                caption="3 nights · then 2 nights"
+                icon={Trophy}
+                label="Eviction Board · Daily & Grand Total"
+                value="Nominations"
+                caption={`${revealedDaysCount} of ${totalNominationDaysCount} days revealed · Tap to view & vote reveal`}
                 tone="light"
+                onClick={() => setIsNominationsBoardOpen(true)}
               />
             </div>
 
@@ -3821,6 +5775,7 @@ function App() {
             />
             <ItineraryTimeline
               entries={itineraryEntries}
+              weatherByDate={weather.byDate}
               isSaving={isItinerarySaving}
               message={itineraryMessage}
               error={itineraryError}
@@ -3837,32 +5792,37 @@ function App() {
               <SectionHeading
                 eyebrow="Getting there & back"
                 title="Flight notes"
-                detail="Only the times you provided are filled in; airline, flight number, airport, and booking reference are left open for your details."
+                detail="Confirmed flights between Manila (NAIA Terminal 3) and Da Nang International Airport (Terminal 2)."
               />
               <div className="grid gap-5 lg:grid-cols-2">
                 <FlightCard
-                  label="Outbound · Manila to Vietnam"
+                  label="Outbound · Manila to Da Nang"
+                  flightNumber="5J 5756"
                   date="Tuesday, November 24"
                   departure="7:50 PM"
-                  departureCity="Manila · departure"
-                  arrival="11:00 PM"
-                  arrivalCity="Hoi An · accommodation ETA"
-                  note="Flight departure time and Hoi An accommodation ETA noted. Landing time and transfer details still need confirmation."
+                  departureCity="Manila (MNL)"
+                  departureTerminal="NAIA Terminal 3"
+                  arrival="9:30 PM"
+                  arrivalCity="Da Nang (DAD) → Hoi An"
+                  arrivalTerminal="Da Nang Intl Airport · Terminal 2"
+                  note="Flight 5J 5756 departs Manila (NAIA Terminal 3) at 7:50 PM and arrives at Da Nang International Airport (Terminal 2) at 9:30 PM before transferring to Hoi An."
                 />
                 <FlightCard
-                  label="Return · Vietnam to Manila"
+                  label="Return · Da Nang to Manila"
+                  flightNumber="5J 5757"
                   date="Sunday, November 29"
                   departure="10:30 PM"
-                  departureCity="Da Nang · departure"
-                  arrival="—"
-                  arrivalCity="Manila · arrival time to add"
-                  note="Return departure time noted. Add airline, flight number, airport details, and Manila arrival time when available."
+                  departureCity="Da Nang (DAD)"
+                  departureTerminal="Da Nang Intl Airport · Terminal 2"
+                  arrival="2:15 AM"
+                  arrivalCity="Manila (MNL)"
+                  arrivalTerminal="NAIA Terminal 3"
+                  note="Return flight 5J 5757 departs Da Nang International Airport (Terminal 2) at 10:30 PM and arrives in Manila (NAIA Terminal 3) at 2:15 AM."
                 />
               </div>
               <div className="flex items-start gap-3 rounded-[22px] border border-[#eddcc4] bg-white p-5 text-sm leading-6 text-[#785c4e]">
                 <Clock3 size={18} className="mt-0.5 shrink-0 text-[#b91c1c]" />
-                All times shown are local to the place they refer to. The 11:00 PM note is your Hoi An stay ETA,
-                not a flight landing time.
+                All times shown are local to the place they refer to. Outbound flight 5J 5756 lands at Da Nang International Airport Terminal 2 at 9:30 PM, and return flight 5J 5757 lands at NAIA Terminal 3 at 2:15 AM.
               </div>
             </div>
 
@@ -3875,8 +5835,11 @@ function App() {
               <div className="grid gap-5 lg:grid-cols-2">
                 <StayCard
                   city="Hoi An"
-                  dates="Nov 24, 11:00 PM – Nov 27, 12:00 PM"
-                  nights="3 nights · late arrival, checkout at noon"
+                  address="12 Trần Cao Vân, Sơn Phong, Tp. Hội An, Quảng Nam, Vietnam"
+                  wifiNetwork="dao tien homestay 1 or 2"
+                  wifiPassword="12trancaovan"
+                  dates="Nov 24, 9:30 PM – Nov 27, 11:00 AM"
+                  nights="3 nights · 9:30 PM arrival, checkout at 11:00 AM on Nov 27"
                   variant="hoi-an"
                   images={hoiAnImages}
                   airbnbId="20275214"
@@ -3885,8 +5848,9 @@ function App() {
                 />
                 <StayCard
                   city="Da Nang"
-                  dates="Nov 27 – Nov 29"
-                  nights="2 nights · checkout details to confirm"
+                  address="27 Vũng Thùng 1, Sơn Trà, Đà Nẵng 550000, Vietnam"
+                  dates="Nov 27, 2:00 PM – Nov 30, 12:00 PM"
+                  nights="Check-in 2:00 PM Nov 27 · checkout 12:00 PM Nov 30 (leave for airport by 6:00 PM Nov 29)"
                   variant="da-nang"
                   images={daNangImages}
                   airbnbId="1786990244635048452"
@@ -3895,8 +5859,12 @@ function App() {
                 />
               </div>
               <div className="rounded-[22px] border border-dashed border-[#e5cfa8] bg-white/60 p-5 text-sm leading-6 text-[#785c4e]">
-                <span className="font-semibold text-[#2a1810]">Between stays:</span> Hoi An checkout is at
-                noon on Nov 27. Transfer timing and luggage arrangements for Da Nang are still to be planned.
+                <span className="font-semibold text-[#2a1810]">Stay schedule notes:</span> Hoi An
+                checkout is at <span className="font-semibold text-[#2a1810]">11:00 AM on Nov 27</span>, and
+                Da Nang check-in is at <span className="font-semibold text-[#2a1810]">2:00 PM on Nov 27</span>.
+                Da Nang checkout is at <span className="font-semibold text-[#2a1810]">12:00 PM on Nov 30</span>,
+                but we will head to the airport by{" "}
+                <span className="font-semibold text-[#2a1810]">6:00 PM on Nov 29</span>.
               </div>
             </div>
           </div>
@@ -3921,12 +5889,76 @@ function App() {
             onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}
             onSetSharePaid={handleSharePaid}
+            onSelectPerson={(person) => {
+              setOpenedFromDirectory(false);
+              setSelectedPersonId(person.id);
+            }}
           />
         )}
       </main>
 
+      <PeopleDirectoryModal
+        isOpen={isPeopleDirectoryOpen && !selectedPerson}
+        people={people}
+        expenses={expenses}
+        todos={todos}
+        vndPerPhp={vndPerPhp}
+        onClose={() => setIsPeopleDirectoryOpen(false)}
+        onSelectPerson={(person) => {
+          setOpenedFromDirectory(true);
+          setIsPeopleDirectoryOpen(false);
+          setSelectedPersonId(person.id);
+        }}
+      />
+
+      <PersonProfileModal
+        person={selectedPerson}
+        expenses={expenses}
+        todos={todos}
+        vndPerPhp={vndPerPhp}
+        busyShareId={busyShareId}
+        busyAssignmentKey={busyAssignmentKey}
+        onClose={() => setSelectedPersonId(null)}
+        onBackToList={
+          openedFromDirectory
+            ? () => {
+                setSelectedPersonId(null);
+                setIsPeopleDirectoryOpen(true);
+              }
+            : undefined
+        }
+        onSetSharePaid={handleSharePaid}
+        onToggleAssignmentDone={handleToggleAssignmentDone}
+        onUpdateProfile={handleUpdatePersonProfile}
+      />
+
+      <NominationModal
+        isOpen={isNominationModalOpen}
+        people={people}
+        nominationDays={nominationDays}
+        nominations={nominations}
+        isSaving={isNominationSaving}
+        onClose={() => setIsNominationModalOpen(false)}
+        onOpenBoard={() => setIsNominationsBoardOpen(true)}
+        onSaveNominations={handleSaveNominations}
+      />
+
+      <NominationsBoardModal
+        isOpen={isNominationsBoardOpen}
+        people={people}
+        nominationDays={nominationDays}
+        nominations={nominations}
+        revealVotes={nominationRevealVotes}
+        revealStatus={nominationRevealStatus}
+        busyRevealKey={busyRevealKey}
+        error={revealError}
+        onClose={() => setIsNominationsBoardOpen(false)}
+        onToggleRevealVote={handleToggleRevealVote}
+        onOpenNominate={() => setIsNominationModalOpen(true)}
+      />
+
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-[#eddcc4] bg-[#fffaf3]/95 px-2 pt-2 backdrop-blur-xl [padding-bottom:calc(0.5rem+env(safe-area-inset-bottom))] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-[#d8be90] bg-[#f5e7cb]/95 px-2 pt-2 backdrop-blur-xl [padding-bottom:calc(0.5rem+env(safe-area-inset-bottom))] lg:hidden"
         aria-label="Trip sections"
       >
         <div className="mx-auto flex max-w-lg justify-around">
@@ -3938,10 +5970,10 @@ function App() {
                 key={item.id}
                 onClick={() => setActiveView(item.id)}
                 aria-current={activeView === item.id ? "page" : undefined}
-                className={`flex min-h-12 min-w-[64px] flex-col items-center justify-center gap-1 rounded-xl px-2 text-[10px] font-semibold transition ${
+                className={`flex min-h-12 min-w-[64px] flex-col items-center justify-center gap-1 rounded-xl px-2 text-[10px] font-bold transition ${
                   activeView === item.id
-                    ? "bg-[#fef3c7] text-[#b91c1c]"
-                    : "text-[#8c6f60] hover:bg-[#f7ebd9]"
+                    ? "bg-[#1d4ed8] text-[#fde047] shadow-xs ring-1 ring-[#facc15]"
+                    : "text-[#5c4b32] hover:bg-[#ead8b5]"
                 }`}
               >
                 <Icon size={18} strokeWidth={activeView === item.id ? 2.2 : 1.8} />

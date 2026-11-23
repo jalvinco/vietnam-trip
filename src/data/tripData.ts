@@ -5,6 +5,10 @@ import type {
   ExpenseRow,
   ExpenseShareRow,
   ItineraryRow,
+  NominationDayRow,
+  NominationRevealStatusRow,
+  NominationRevealVoteRow,
+  NominationRow,
   PersonRow,
   TodoAssignmentRow,
   TodoRow,
@@ -57,6 +61,10 @@ export type TripData = {
   expenses: ExpenseDetails[];
   itinerary: ItineraryRow[];
   todos: TodoDetails[];
+  nominationDays: NominationDayRow[];
+  nominations: NominationRow[];
+  nominationRevealVotes: NominationRevealVoteRow[];
+  nominationRevealStatus: NominationRevealStatusRow[];
 };
 
 const todoDetailsSelection = `
@@ -303,23 +311,48 @@ export async function fetchTripData(): Promise<TripData> {
       "Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.",
     );
   }
-  const [peopleResult, categoryResult, expenseResult, itineraryResult, todoResult] =
-    await Promise.all([
-      supabase.from("people").select("id, name, age, created_at").order("name"),
-      supabase.from("expense_categories").select("id, name").order("name"),
-      supabase
-        .from("expenses")
-        .select(expenseDetailsSelection)
-        .order("spent_at", { ascending: false }),
-      supabase
-        .from("itinerary")
-        .select(
-          "id, date, time, location_pin, location_name, address, google_place_id, latitude, longitude, description, created_at",
-        )
-        .order("date")
-        .order("time"),
-      supabase.from("todos").select(todoDetailsSelection).order("done").order("name"),
-    ]);
+  const [
+    peopleResult,
+    categoryResult,
+    expenseResult,
+    itineraryResult,
+    todoResult,
+    nominationDaysResult,
+    nominationsResult,
+    nominationRevealVotesResult,
+    nominationRevealStatusResult,
+  ] = await Promise.all([
+    supabase.from("people").select("id, name, age, details, created_at").order("name"),
+    supabase.from("expense_categories").select("id, name").order("name"),
+    supabase
+      .from("expenses")
+      .select(expenseDetailsSelection)
+      .order("spent_at", { ascending: false }),
+    supabase
+      .from("itinerary")
+      .select(
+        "id, date, time, location_pin, location_name, address, google_place_id, latitude, longitude, description, created_at",
+      )
+      .order("date")
+      .order("time"),
+    supabase.from("todos").select(todoDetailsSelection).order("done").order("name"),
+    supabase
+      .from("nomination_days")
+      .select("nomination_date, max_nominations_per_person")
+      .order("nomination_date"),
+    supabase
+      .from("nominations")
+      .select("id, nomination_date, voter_person_id, nominee_person_id, created_at")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("nomination_reveal_votes")
+      .select("nomination_date, person_id, voted_at")
+      .order("voted_at"),
+    supabase
+      .from("nomination_reveal_status")
+      .select("nomination_date, total_people, reveal_votes, is_revealed")
+      .order("nomination_date"),
+  ]);
 
   const failures = [
     peopleResult.error && dataError("Could not load people", peopleResult.error),
@@ -327,6 +360,13 @@ export async function fetchTripData(): Promise<TripData> {
     expenseResult.error && dataError("Could not load expenses", expenseResult.error),
     itineraryResult.error && dataError("Could not load the itinerary", itineraryResult.error),
     todoResult.error && dataError("Could not load todos", todoResult.error),
+    nominationDaysResult.error &&
+      dataError("Could not load nomination days", nominationDaysResult.error),
+    nominationsResult.error && dataError("Could not load nominations", nominationsResult.error),
+    nominationRevealVotesResult.error &&
+      dataError("Could not load nomination reveal votes", nominationRevealVotesResult.error),
+    nominationRevealStatusResult.error &&
+      dataError("Could not load nomination reveal status", nominationRevealStatusResult.error),
   ].filter((error): error is Error => error !== null);
 
   if (failures.length > 0) {
@@ -340,7 +380,11 @@ export async function fetchTripData(): Promise<TripData> {
     !categoryResult.data ||
     !expenseResult.data ||
     !itineraryResult.data ||
-    !todoResult.data
+    !todoResult.data ||
+    !nominationDaysResult.data ||
+    !nominationsResult.data ||
+    !nominationRevealVotesResult.data ||
+    !nominationRevealStatusResult.data
   ) {
     throw new Error(
       "Supabase returned incomplete trip data. Check table access and row-level security policies.",
@@ -353,6 +397,10 @@ export async function fetchTripData(): Promise<TripData> {
     expenses: expenseResult.data,
     itinerary: itineraryResult.data,
     todos: todoResult.data,
+    nominationDays: nominationDaysResult.data,
+    nominations: nominationsResult.data,
+    nominationRevealVotes: nominationRevealVotesResult.data,
+    nominationRevealStatus: nominationRevealStatusResult.data,
   };
 }
 
@@ -764,4 +812,139 @@ export async function setTodoAssignmentDone(
   if (!data) {
     throw new Error("Todo assignment status was not updated. Check access policies.");
   }
+}
+
+export async function updatePersonProfile(
+  personId: string,
+  draft: { age: number | null; details: string | null },
+): Promise<PersonRow> {
+  const { data, error } = await supabase
+    .from("people")
+    .update({
+      age: draft.age,
+      details: draft.details?.trim() || null,
+    })
+    .eq("id", personId)
+    .select("id, name, age, details, created_at")
+    .maybeSingle();
+  if (error) throw dataError("Could not update person profile", error);
+  if (!data) {
+    throw new Error("Profile was not updated. Check row-level security policies.");
+  }
+  return data;
+}
+
+export async function saveVoterNominationsForDay(
+  nominationDate: string,
+  voterPersonId: string,
+  nomineePersonIds: string[],
+  maxNominations = 2,
+): Promise<NominationRow[]> {
+  if (!nominationDate) {
+    throw new Error("Choose a valid nomination day.");
+  }
+  if (!voterPersonId) {
+    throw new Error("Select which housemate is voting.");
+  }
+  const uniqueNominees = Array.from(new Set(nomineePersonIds));
+  if (uniqueNominees.length !== nomineePersonIds.length) {
+    throw new Error("You cannot nominate the same housemate twice on the same day.");
+  }
+  if (uniqueNominees.includes(voterPersonId)) {
+    throw new Error("Housemates cannot nominate themselves.");
+  }
+  if (uniqueNominees.length > maxNominations) {
+    throw new Error(`You can nominate at most ${maxNominations} housemates per day.`);
+  }
+
+  const clearResult = await supabase
+    .from("nominations")
+    .delete()
+    .eq("nomination_date", nominationDate)
+    .eq("voter_person_id", voterPersonId);
+  if (clearResult.error) {
+    throw dataError("Could not update existing nominations", clearResult.error);
+  }
+
+  if (uniqueNominees.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("nominations")
+    .insert(
+      uniqueNominees.map((nomineeId) => ({
+        nomination_date: nominationDate,
+        voter_person_id: voterPersonId,
+        nominee_person_id: nomineeId,
+      })),
+    )
+    .select("id, nomination_date, voter_person_id, nominee_person_id, created_at");
+
+  if (error) {
+    throw dataError("Could not save nominations", error);
+  }
+  return data ?? [];
+}
+
+export async function setNominationRevealVote(
+  nominationDate: string,
+  personId: string,
+  shouldVote: boolean,
+): Promise<{
+  vote: NominationRevealVoteRow | null;
+  status: NominationRevealStatusRow | null;
+}> {
+  if (!nominationDate) {
+    throw new Error("Choose a valid nomination day.");
+  }
+  if (!personId) {
+    throw new Error("Choose a valid housemate.");
+  }
+
+  let savedVote: NominationRevealVoteRow | null = null;
+
+  if (shouldVote) {
+    const { data, error } = await supabase
+      .from("nomination_reveal_votes")
+      .upsert(
+        {
+          nomination_date: nominationDate,
+          person_id: personId,
+        },
+        { onConflict: "nomination_date,person_id" },
+      )
+      .select("nomination_date, person_id, voted_at")
+      .single();
+
+    if (error) {
+      throw dataError("Could not record reveal vote", error);
+    }
+    savedVote = data;
+  } else {
+    const { error } = await supabase
+      .from("nomination_reveal_votes")
+      .delete()
+      .eq("nomination_date", nominationDate)
+      .eq("person_id", personId);
+
+    if (error) {
+      throw dataError("Could not withdraw reveal vote", error);
+    }
+  }
+
+  const { data: statusData, error: statusError } = await supabase
+    .from("nomination_reveal_status")
+    .select("nomination_date, total_people, reveal_votes, is_revealed")
+    .eq("nomination_date", nominationDate)
+    .maybeSingle();
+
+  if (statusError) {
+    throw dataError("Could not load updated reveal status", statusError);
+  }
+
+  return {
+    vote: savedVote,
+    status: statusData,
+  };
 }
